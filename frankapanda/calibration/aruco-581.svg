@@ -1,0 +1,22 @@
+<svg viewBox="-1 -1 9 9" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" width="55mm" height="55mm">
+    <!-- Black bounding box -->
+    <rect x="-1" y="-1" width="9" height="9" fill="white" stroke="black" stroke-width="0.1" ></rect>
+    <!-- Main black area of the tag -->
+    <rect x="0" y="0" width="7" height="7" fill="black"></rect>
+    <!-- White rectangles inside the tag -->
+    <rect width="1" height="1" x="2" y="1" fill="white"></rect>
+    <rect width="1" height="1" x="5" y="1" fill="white"></rect>
+    <rect width="1" height="1" x="1" y="2" fill="white"></rect>
+    <rect width="1.5" height="1" x="3" y="2" fill="white"></rect>
+    <rect width="1.5" height="1" x="4" y="2" fill="white"></rect>
+    <rect width="1" height="1" x="5" y="2" fill="white"></rect>
+    <rect width="1" height="1" x="1" y="3" fill="white"></rect>
+    <rect width="1" height="1" x="1" y="4" fill="white"></rect>
+    <rect width="1.5" height="1" x="3" y="4" fill="white"></rect>
+    <rect width="1.5" height="1" x="4" y="4" fill="white"></rect>
+    <rect width="1" height="1" x="5" y="4" fill="white"></rect>
+    <rect width="1" height="1" x="1" y="5" fill="white"></rect>
+    <rect width="1.5" height="1" x="3" y="5" fill="white"></rect>
+    <rect width="1.5" height="1" x="4" y="5" fill="white"></rect>
+    <rect width="1" height="1" x="5" y="5" fill="white"></rect>
+</svg>

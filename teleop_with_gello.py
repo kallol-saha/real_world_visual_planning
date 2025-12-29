@@ -69,31 +69,31 @@ class GelloTeleop:
 
         # -------------- FOR GELLO -------------- #
 
-        self.gello_gripper_open = args.gripper_open
-        self.gello_gripper_closed = args.gripper_close
+        # self.gello_gripper_open = args.gripper_open
+        # self.gello_gripper_closed = args.gripper_close
         
-        self.gello_client = ZMQClientRobot(
-            port=args.robot_port, host=args.hostname
-        )
-        self.env = RobotEnv(self.gello_client, control_rate_hz=args.control_rate_hz)
-        self.port = self.get_usb_port()
+        # self.gello_client = ZMQClientRobot(
+        #     port=args.robot_port, host=args.hostname
+        # )
+        # self.env = RobotEnv(self.gello_client, control_rate_hz=args.control_rate_hz)
+        # self.port = self.get_usb_port()
 
-        self.dynamixel_config = DynamixelRobotConfig(
-            joint_ids=(1, 2, 3, 4, 5, 6, 7),
-            joint_offsets=(
-                3 * np.pi / 2,
-                2 * np.pi / 2,
-                1 * np.pi / 2,
-                4 * np.pi / 2,
-                -2 * np.pi / 2 + 2 * np.pi,
-                3 * np.pi / 2,
-                4 * np.pi / 2,
-            ),
-            joint_signs=(1, -1, 1, 1, 1, -1, 1),
-            gripper_config=(8, 195, 152),
-        )
+        # self.dynamixel_config = DynamixelRobotConfig(
+        #     joint_ids=(1, 2, 3, 4, 5, 6, 7),
+        #     joint_offsets=(
+        #         3 * np.pi / 2,
+        #         2 * np.pi / 2,
+        #         1 * np.pi / 2,
+        #         4 * np.pi / 2,
+        #         -2 * np.pi / 2 + 2 * np.pi,
+        #         3 * np.pi / 2,
+        #         4 * np.pi / 2,
+        #     ),
+        #     joint_signs=(1, -1, 1, 1, 1, -1, 1),
+        #     gripper_config=(8, 195, 152),
+        # )
 
-        self.gello = self.dynamixel_config.make_robot(self.port)
+        # self.gello = self.dynamixel_config.make_robot(self.port)
 
         # -------------------------------------- #
 
@@ -138,6 +138,7 @@ class GelloTeleop:
             if len(self.robot_interface._state_buffer) > 0:
                 robot_joints = self.robot_interface._state_buffer[-1].q
                 return robot_joints
+            print("Waiting for robot joints...")
     
     def get_gripper_pose(self):
         while True:
@@ -145,7 +146,8 @@ class GelloTeleop:
                 gripper_pose = self.robot_interface._state_buffer[-1].O_T_EE
                 gripper_pose = np.array(gripper_pose).reshape(4, 4)
                 return gripper_pose
-    
+            print("Waiting for robot gripper pose...")
+            
     def get_gripper_state(self):
 
         while True:
