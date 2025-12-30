@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from deoxys import config_root
 from deoxys.experimental.motion_utils import reset_joints_to
 from deoxys.franka_interface import FrankaInterface
 from deoxys.utils import YamlConfig, transform_utils
@@ -40,13 +39,13 @@ class FrankaOSCController():
     def __init__(self,
                  interface_cfg="charmander.yml",
                  controller_type="OSC_POSE",
-                 controller_cfg="/data/robogen/RoboGen-sim2real/deoxys_control/deoxys/config/tuned-osc-yaw-controller.yml",
+                 controller_cfg="tuned-osc-yaw-controller.yml",
                  controller_offset=np.eye(4),
                  frame_transform=np.eye(4),
                  tip_offset=np.array([0, 0, 0.0766]),   # 0.0766 is measured
                  visualizer=False):
         self.robot_interface = FrankaInterface(
-            config_root + f"/{interface_cfg}",
+            f"{interface_cfg}",
             control_freq=20, 
             use_visualizer=visualizer)
         

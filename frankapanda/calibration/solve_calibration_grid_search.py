@@ -4,12 +4,13 @@ import pickle, os
 from scipy.linalg import logm, expm
 from scipy.spatial.transform import Rotation
 
-def estimate_tag_pose(finger_pose):
+def estimate_tag_pose(finger_pose, t_tag_to_hand_base):
     """
     Estimate the tag pose given the gripper pose by applying the gripper-to-tag transformation.
 
     Args:
         finger_pose (eef_pose): 4x4 transformation matrix from gripper to robot base
+        t_tag_to_hand_base: Base translation from tag to hand (before corner offset)
     Returns:
         hand_pose: 4x4 transformation matrix from hand to robot base
         tag_pose: 4x4 transformation matrix from tag to robot base
@@ -32,10 +33,9 @@ def estimate_tag_pose(finger_pose):
         [0, 0, 0, 1],
     ])
     hand_to_finger = np.linalg.inv(finger_to_hand)
-    print("hand to finger", hand_to_finger)
     hand_pose = np.dot(finger_pose, hand_to_finger)
 
-    t_tag_to_hand = np.array([0.048914, 0.0275, 0.00753])   # to tag corner
+    t_tag_to_hand = t_tag_to_hand_base.copy()   # to tag corner
     t_tag_to_hand += np.array([0, -0.0275, 0.0275])         # to tag center
     # R_tag_to_hand = Rotation.from_quat([0.5, -0.5, 0.5, -0.5])
     R_tag_to_hand = Rotation.from_quat([0, 0, 0, 1])
@@ -89,64 +89,91 @@ def calculate_reprojection_error(tag_poses, target_poses, T_matrix):
     avg_error = np.mean(errors)
     return avg_error
 
-def solve_extrinsic(gripper_poses, target_poses_in_camera, eye_to_hand=True):
+def solve_extrinsic(gripper_poses, target_poses_in_camera, t_tag_to_hand_base, eye_to_hand=True):
     """
     Solve the extrinsic calibration between the camera and the base.
     """
     if eye_to_hand:
         # Calculate the transformation matrix from gripper to tag
-        tag_poses = [estimate_tag_pose(pose)[1] for pose in gripper_poses]
-    # T1, T = solve_hand_eye_calibration(
-    #     gripper_poses, target_poses_in_camera)
-    # print(f"Transformation matrix T1:\n{T1}")
-    # print(f"Transformation matrix T:\n{T}")
-
-    # origin_pose = np.eye(4)
-    # transformed_origin = T @ origin_pose
-    # print(f"Transformed origin:\n{transformed_origin}")
+        tag_poses = [estimate_tag_pose(pose, t_tag_to_hand_base)[1] for pose in gripper_poses]
     
     gripper_pos = np.array([pose[:3, 3] for pose in tag_poses])
     target_pos = np.array([pose[:3, 3] for pose in target_poses_in_camera])
     T = solve_rigid_transformation(target_pos, gripper_pos)
-    print(f"Transformation matrix T:\n{T}")
 
     # Calculate the reprojection error
     avg_error = calculate_reprojection_error(
         tag_poses, target_poses_in_camera, T)
-    print(f"Average reprojection error: {avg_error}")
 
-    # # Calculate tag pose in base
-    # target_poses = [T @ p for p in gripper_poses]
-
-    # # Solve the rigid transformation
-    # T = solve_rigid_transformation(
-    #     target_poses_in_camera, target_poses)
-
-    return T
+    return T, avg_error
 
 
 if __name__ == "__main__":
-    # filepath = os.path.abspath(__file__)
-    # dirpath = os.path.dirname(os.path.dirname(filepath))
-
     # Load data
-    # camera_type = "zed"
-    # dirpath = os.path.join(dirpath, camera_type + "_cams")
-    # cam_id = 2
-    # data_dirname = os.path.join(dirpath, "data")
-
-    cam_id = 0
+    cam_id = 1
     data_dirname = "data"
     data_filepath = os.path.join(data_dirname, f"cam{cam_id}_data.pkl")
     with open(data_filepath, "rb") as f:
         data = pickle.load(f)
     gripper_poses, target_poses_in_camera = zip(*data) 
     
-    # Solve the extrinsic calibration
-    T = solve_extrinsic(gripper_poses, target_poses_in_camera)
-
-    # Save the calibration
+    # Base t_tag_to_hand value (before corner offset)
+    t_tag_to_hand_base = np.array([0.048914, 0.0275, 0.00753])
+    
+    # Define search range (interpolate between +/- values)
+    # You can adjust these ranges and step sizes
+    ranges = [
+        np.linspace(t_tag_to_hand_base[0] - 0.01, t_tag_to_hand_base[0] + 0.01, 11),  # x: ±0.01 with 11 steps
+        np.linspace(t_tag_to_hand_base[1] - 0.01, t_tag_to_hand_base[1] + 0.01, 11),  # y: ±0.01 with 11 steps
+        np.linspace(t_tag_to_hand_base[2] - 0.01, t_tag_to_hand_base[2] + 0.01, 11),  # z: ±0.01 with 11 steps
+    ]
+    
+    # Grid search over all combinations
+    best_error = float('inf')
+    best_t_tag_to_hand = None
+    best_T = None
+    total_combinations = len(ranges[0]) * len(ranges[1]) * len(ranges[2])
+    current = 0
+    
+    print(f"Searching over {total_combinations} combinations...")
+    print(f"Base t_tag_to_hand: {t_tag_to_hand_base}")
+    print(f"Search ranges: x=[{ranges[0][0]:.6f}, {ranges[0][-1]:.6f}], "
+          f"y=[{ranges[1][0]:.6f}, {ranges[1][-1]:.6f}], "
+          f"z=[{ranges[2][0]:.6f}, {ranges[2][-1]:.6f}]")
+    print()
+    
+    for x in ranges[0]:
+        for y in ranges[1]:
+            for z in ranges[2]:
+                current += 1
+                t_test = np.array([x, y, z])
+                
+                try:
+                    T, error = solve_extrinsic(gripper_poses, target_poses_in_camera, t_test)
+                    
+                    if error < best_error:
+                        best_error = error
+                        best_t_tag_to_hand = t_test.copy()
+                        best_T = T.copy()
+                    
+                    if current % 100 == 0:
+                        print(f"Progress: {current}/{total_combinations} | Current best error: {best_error:.6f}")
+                        
+                except Exception as e:
+                    print(f"Error with t_tag_to_hand={t_test}: {e}")
+                    continue
+    
+    print("\n" + "="*60)
+    print("GRID SEARCH RESULTS")
+    print("="*60)
+    print(f"Best t_tag_to_hand (before corner offset): {best_t_tag_to_hand}")
+    print(f"Best calibration error: {best_error:.6f}")
+    print(f"\nBest transformation matrix T:\n{best_T}")
+    print("="*60)
+    
+    # Save the best calibration
     calib_dirname = os.path.join("data", "calibration_results")
     os.makedirs(calib_dirname, exist_ok=True)
-    filepath = os.path.join(calib_dirname, f"cam{cam_id}_calibration.npz")
-    np.savez(filepath, T=T)
+    filepath = os.path.join(calib_dirname, f"cam{cam_id}_calibration_grid_search.npz")
+    np.savez(filepath, T=best_T, t_tag_to_hand=best_t_tag_to_hand, error=best_error)
+

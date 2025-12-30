@@ -4,6 +4,8 @@ import cv2
 import numpy as np
 import time
 import json
+from robo_utils.visualization.plotting import plot_pcd
+from robo_utils.conversion_utils import transform_pcd
 
 def estimate_intrinsics(points_3d, depth):
     """
@@ -132,16 +134,33 @@ def get_kinect_rgbd_frame(device: PyK4A_device, visualize=False):
 
 connected_devices = connected_device_count()
 
-k4a_0 = PyK4A(device_id=0)
-k4a_0.start()
-# k4a_0.close()
+cam_id = 1
+calibration_file = f"data/calibration_results/cam{cam_id}_calibration.npz"
+content = np.load(calibration_file)
+T = content['T']
 
-# k4a_1 = PyK4A(device_id=1)
-# k4a_1.start()
-# k4a_1.close()
 
-# while True:
-ir_frame, rgb_frame, ir_frame_norm, pcd_frame, depth_frame = get_kinect_rgbd_frame(k4a_0)
+k4a = PyK4A(device_id=cam_id)
+k4a.start()
+
+ir_frame, rgb_frame, ir_frame_norm, pcd_frame, depth_frame = get_kinect_rgbd_frame(k4a)
+
+distance_threshold = 1.
+
+pcd = pcd_frame.reshape(-1, 3)
+rgb = rgb_frame[..., [2, 1, 0]].reshape(-1, 3) / 255.0
+pcd = pcd / 1000.0      # convert to meters
+distances = np.linalg.norm(pcd, axis=1)
+
+mask = (distances < distance_threshold) & (distances > 0.)
+pcd = pcd[mask]
+rgb = rgb[mask]
+plot_pcd(pcd, rgb, base_frame=True) #, frame_size=20.0)
+
+pcd = transform_pcd(pcd, T)
+plot_pcd(pcd, rgb, base_frame=True) #, frame_size=20.0)
+
+print("")
 
 
 # k4a.save_calibration_json("calibration_0.json")

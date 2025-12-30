@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 from pyk4a import PyK4A
 from pyk4a.calibration import CalibrationType
 
-from frankapanda.calibration.robot_controller import FrankaOSCController
+from robot_controller import FrankaOSCController
 from marker_detection import get_kinect_ir_frame, detect_aruco_markers, estimate_transformation
 
 
@@ -81,17 +81,12 @@ def move_robot_and_record_data(
     return filepath
 
 def main():
-    cam_id = 3
-    # 0: right -     000880595012
-    # 2: left -     000059793721
-    # 1: front -    000180921812
-    # 3: back -     000263392612
+    cam_id = 1
+    # 0: front -     000880595012
+    # 1: left -     000059793721
     initial_joint_positions = {
-        0: [-0.9815314609720331, 0.31031684451395847, 0.630475446598282, -1.823140417152359, -0.14117339535320805, 2.020006045755246, -1.9992902488784574],
-        1: [-0.83424677, 0.42084166, 0.2774182, -1.97982254, -0.1749291, 2.40231471, 0.27310384],
-        2: [-0.81592058, 0.39429853, 0.29050235, -1.88333403, -0.17686262, 2.28619198, 1.98916667],
-        3: [-0.85456277, 0.36942704, 0.38232294, -1.88742087, -0.45677587, 2.19400042, -2.88310376]
-        # 3: [ 1.9666895  -0.58094072 -2.34559199 -1.91077682 -0.83849069  2.12780669 2.84485489]
+        0: [-1.12926786, 0.57204987, 0.57567669, -2.07868776, -0.14864151, 2.61236043, -0.02517276],
+        1: [-0.74921682, 0.13623207, 0.37435664, -2.00871515, -0.54053575, 2.19774203, 2.34971468]
     }[cam_id]
     
     # Perform the movements and record data

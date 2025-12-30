@@ -8,7 +8,7 @@ import cv2
 from pyk4a import PyK4A
 from pyk4a.calibration import CalibrationType
 
-from hacman_real_env.robot_controller import FrankaOSCController
+from robot_controller import FrankaOSCController
 from marker_detection import get_kinect_ir_frame, detect_aruco_markers, estimate_transformation
 
 
@@ -111,7 +111,7 @@ def solve_hand_eye_calibration(data_filepath, eye_to_hand=True):
 
 def main():
     # Perform the movements and record data
-    cam_id = 1
+    cam_id = 0
     # data_filepath = move_robot_and_record_data(
     #     cam_id=cam_id, num_movements=50, visualize=False)
     
