@@ -32,7 +32,7 @@ The Azure Kinect SDK (PyK4A) requires that Python processes start and end around
 │      --cam_id 0       │         │      --cam_id 1       │
 └───────────┬───────────┘         └───────────┬───────────┘
             │                                 │
-            │ ZMQ PUSH (port 5555)            │ ZMQ PUSH (port 5555)
+            │ ZMQ PUSH (port 5557)            │ ZMQ PUSH (port 5557)
             └─────────────┬───────────────────┘
                           │
                           ▼
@@ -66,7 +66,7 @@ The Azure Kinect SDK (PyK4A) requires that Python processes start and end around
 
 **Usage:**
 ```bash
-python capture_single_camera.py --cam_id 0 --zmq_port 5555
+python capture_single_camera.py --cam_id 0 --zmq_port 5557
 ```
 
 **Arguments:**
@@ -77,7 +77,7 @@ python capture_single_camera.py --cam_id 0 --zmq_port 5555
 **Purpose:** Main orchestrator that manages the complete pipeline
 
 **Process:**
-1. Binds ZMQ receiver (PULL socket) on port 5555
+1. Binds ZMQ receiver (PULL socket) on port 5557
 2. Binds ZMQ publisher (PUB socket) on port 5556
 3. Launches subprocess for camera 0
 4. Receives camera 0 data via ZMQ
@@ -111,7 +111,7 @@ python perception_pipeline.py --save
 ```
 
 **Arguments:**
-- `--receive_port`: Port to receive camera data (default: 5555)
+- `--receive_port`: Port to receive camera data (default: 5557)
 - `--publish_port`: Port to publish final point cloud (default: 5556)
 - `--num_points`: Number of points for FPS downsampling (default: 4096)
 - `--save`: Save final point cloud to `data/perception_output/`
@@ -307,9 +307,10 @@ rgb_final = np.asarray(pcd_o3d.colors)
 - **Error:** `Address already in use`
 - **Solution:** Kill any existing processes using the ports:
   ```bash
-  lsof -ti:5555 | xargs kill -9
-  lsof -ti:5556 | xargs kill -9
+  lsof -ti:5557 | xargs kill -9  # Camera data port
+  lsof -ti:5556 | xargs kill -9  # Published point cloud port
   ```
+- **Note:** Port 5555 is used by Deoxys robot control, so perception uses 5557
 
 ### Alignment Transform Not Found
 - **Error:** `FileNotFoundError: cam1_to_cam0.npy`

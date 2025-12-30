@@ -18,7 +18,7 @@ class FrankaPandaController:
     def __init__(self):
 
         self.robot_interface = FrankaInterface(
-            "charmander.yml", 
+            "configs/charmander.yml", 
             use_visualizer=False
         )
 

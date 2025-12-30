@@ -64,7 +64,7 @@ def check_network_connectivity(config):
 
 
 def main():
-    config_file = "charmander.yml"
+    config_file = "configs/charmander.yml"
     
     # Check if config file exists
     if not os.path.exists(config_file):
@@ -154,7 +154,7 @@ def main():
     print("     ps aux | grep deoxys")
     print("   - Start the state publisher if needed:")
     print("     cd ~/deoxys_control/deoxys")
-    print("     python -m deoxys.examples.collect_data --interface-cfg charmander.yml")
+    print("     python -m deoxys.examples.collect_data --interface-cfg configs/charmander.yml")
     print("     (or whatever command starts your state publisher)")
     print("\n2. VERIFY NETWORK CONNECTIVITY:")
     print(f"   - Can you ping the NUC? Try: ping {nuc_ip}")

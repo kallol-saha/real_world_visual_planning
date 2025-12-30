@@ -14,6 +14,7 @@ from pyk4a import PyK4A
 from pyk4a.pyk4a import PyK4A as PyK4A_device
 import zmq
 import pickle
+from pathlib import Path
 
 
 def get_kinect_rgbd_frame(device: PyK4A_device):
@@ -53,7 +54,7 @@ def main():
     parser = argparse.ArgumentParser(description='Capture from single Azure Kinect camera')
     parser.add_argument('--cam_id', type=int, choices=[0, 1], default=0,
                         help='Camera ID (0 or 1)')
-    parser.add_argument('--zmq_port', type=int, default=5555,
+    parser.add_argument('--zmq_port', type=int, default=6555,
                         help='ZMQ port to send data to')
     args = parser.parse_args()
 
@@ -95,7 +96,9 @@ def main():
         print(f"[Camera {args.cam_id}] Valid points after filtering: {len(pcd)}")
 
         # Load and apply calibration transform (camera -> robot base)
-        calib_path = f"/home/ksaha/Research/ModelBasedPlanning/real_world_visual_planning/data/calibration_results/cam{args.cam_id}_calibration.npz"
+        # Get project root (go up from frankapanda/perception/ to root)
+        project_root = Path(__file__).parent.parent.parent
+        calib_path = project_root / "data" / "calibration_results" / f"cam{args.cam_id}_calibration.npz"
         calib_data = np.load(calib_path)
         calibration_transform = calib_data['T']
 
@@ -108,7 +111,7 @@ def main():
             print(f"[Camera {args.cam_id}] No alignment needed (reference frame)")
         else:
             # Camera 1: apply alignment to camera 0 frame
-            alignment_path = "/home/ksaha/Research/ModelBasedPlanning/real_world_visual_planning/data/camera_alignments/cam1_to_cam0.npy"
+            alignment_path = project_root / "data" / "camera_alignments" / "cam1_to_cam0.npy"
             alignment_transform = np.load(alignment_path)
             print(f"[Camera {args.cam_id}] Applying alignment transform...")
             pcd = transform_pcd(pcd, alignment_transform)

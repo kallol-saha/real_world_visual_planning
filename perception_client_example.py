@@ -3,20 +3,29 @@ Example client script that receives the final point cloud from the perception pi
 
 This demonstrates how to subscribe to the perception pipeline output and use it
 in downstream applications (planning, manipulation, etc.)
+
+You can also use the PerceptionPipeline class from frankapanda.perception for easier access.
 """
 
 import argparse
-import zmq
-import pickle
 import numpy as np
-import open3d as o3d
 from robo_utils.visualization.plotting import plot_pcd
+
+# Import from frankapanda package (optional, but cleaner)
+try:
+    from frankapanda.perception import PerceptionPipeline
+    USE_WRAPPER = True
+except ImportError:
+    # Fallback to direct ZMQ
+    import zmq
+    import pickle
+    USE_WRAPPER = False
 
 
 def main():
     parser = argparse.ArgumentParser(description='Perception Pipeline Client')
-    parser.add_argument('--port', type=int, default=5556,
-                        help='ZMQ port to receive final point cloud (default: 5556)')
+    parser.add_argument('--port', type=int, default=6556,
+                        help='ZMQ port to receive final point cloud (default: 6556)')
     parser.add_argument('--visualize', action='store_true',
                         help='Visualize received point cloud with Open3D')
     parser.add_argument('--timeout', type=int, default=60000,
@@ -28,18 +37,29 @@ def main():
     print("="*60)
     print(f"Subscribing to port: {args.port}")
     print(f"Timeout: {args.timeout}ms")
+
+    if USE_WRAPPER:
+        print("Using PerceptionPipeline wrapper class")
+    else:
+        print("Using direct ZMQ (wrapper not available)")
+
     print(f"Waiting for point cloud data...\n")
 
-    # Setup ZMQ subscriber
-    context = zmq.Context()
-    socket = context.socket(zmq.SUB)
-    socket.connect(f"tcp://localhost:{args.port}")
-    socket.setsockopt(zmq.SUBSCRIBE, b'')  # Subscribe to all messages
-    socket.setsockopt(zmq.RCVTIMEO, args.timeout)  # Set timeout
-
     try:
-        # Receive data
-        data = pickle.loads(socket.recv())
+        if USE_WRAPPER:
+            # Method 1: Using the PerceptionPipeline wrapper (recommended)
+            with PerceptionPipeline(publish_port=args.port, timeout_ms=args.timeout) as perception:
+                data = perception.get_point_cloud_dict()
+        else:
+            # Method 2: Direct ZMQ (fallback)
+            context = zmq.Context()
+            socket = context.socket(zmq.SUB)
+            socket.connect(f"tcp://localhost:{args.port}")
+            socket.setsockopt(zmq.SUBSCRIBE, b'')
+            socket.setsockopt(zmq.RCVTIMEO, args.timeout)
+            data = pickle.loads(socket.recv())
+            socket.close()
+            context.term()
 
         print("="*60)
         print("RECEIVED POINT CLOUD DATA")
@@ -61,8 +81,7 @@ def main():
         print(f"  Y: [{pcd[:, 1].min():.3f}, {pcd[:, 1].max():.3f}]")
         print(f"  Z: [{pcd[:, 2].min():.3f}, {pcd[:, 2].max():.3f}]")
 
-        # Visualize if requested
-        # if args.visualize:
+        # Visualize
         print("\nLaunching visualization...")
         plot_pcd(pcd, rgb, base_frame=True)
 
@@ -77,13 +96,15 @@ def main():
         print("CLIENT COMPLETE")
         print("="*60)
 
-    except zmq.Again:
+    except TimeoutError:
         print(f"\nERROR: Timeout after {args.timeout}ms")
         print("Make sure the perception pipeline is running!")
-
-    finally:
-        socket.close()
-        context.term()
+    except Exception as e:
+        if not USE_WRAPPER and hasattr(e, '__class__') and e.__class__.__name__ == 'Again':
+            print(f"\nERROR: Timeout after {args.timeout}ms")
+            print("Make sure the perception pipeline is running!")
+        else:
+            raise
 
 
 if __name__ == '__main__':

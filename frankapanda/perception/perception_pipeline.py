@@ -224,10 +224,10 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = argparse.ArgumentParser(description='Perception Pipeline')
-    parser.add_argument('--receive_port', type=int, default=5555,
-                        help='ZMQ port to receive camera data (default: 5555)')
-    parser.add_argument('--publish_port', type=int, default=5556,
-                        help='ZMQ port to publish final point cloud (default: 5556)')
+    parser.add_argument('--receive_port', type=int, default=6555,
+                        help='ZMQ port to receive camera data (default: 6555)')
+    parser.add_argument('--publish_port', type=int, default=6556,
+                        help='ZMQ port to publish final point cloud (default: 6556)')
     parser.add_argument('--num_points', type=int, default=4096,
                         help='Number of points for FPS downsampling (default: 4096)')
     parser.add_argument('--save', action='store_true',
