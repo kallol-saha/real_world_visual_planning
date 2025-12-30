@@ -36,7 +36,7 @@ class FrankaPandaController:
         )
 
         self.joint_controller_cfg = YamlConfig(
-            "joint-position-controller.yml"
+            "configs/joint-position-controller.yml"
         ).as_easydict()
         self.joint_controller_type = "JOINT_POSITION"
 
