@@ -2,16 +2,14 @@ import numpy as np
 from deoxys.franka_interface import FrankaInterface
 from deoxys.utils import YamlConfig
 
+config_path = "configs"
+
 robot_interface = FrankaInterface(
-        "charmander.yml", 
-        use_visualizer=False
-    )
+    f"{config_path}/charmander.yml", 
+    use_visualizer=False
+)
 
-controller_cfg = YamlConfig(
-    "joint-position-controller.yml"
-).as_easydict()
-controller_type = "JOINT_POSITION"
-
+# These are home joints:
 target_joint_positions = [
     0.09162008114028396,
     -0.19826458111314524,

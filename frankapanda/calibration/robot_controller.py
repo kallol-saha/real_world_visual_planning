@@ -37,7 +37,7 @@ def compute_errors(pose_1, pose_2):
 
 class FrankaOSCController():
     def __init__(self,
-                 interface_cfg="charmander.yml",
+                 interface_cfg="configs/charmander.yml",
                  controller_type="OSC_POSE",
                  controller_cfg="tuned-osc-yaw-controller.yml",
                  controller_offset=np.eye(4),

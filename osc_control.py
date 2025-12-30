@@ -22,7 +22,7 @@ logger = get_deoxys_example_logger()
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--interface-cfg", type=str, default="charmander.yml")
+    parser.add_argument("--interface-cfg", type=str, default="configs/charmander.yml")
     parser.add_argument("--controller-type", type=str, default="OSC_POSE")
     args = parser.parse_args()
     return args

@@ -5,7 +5,7 @@ import time
 import zmq
 from deoxys.utils import YamlConfig
 
-def test_zmq_connection(config_file="charmander.yml"):
+def test_zmq_connection(config_file="configs/charmander.yml"):
     """Test if we can connect to the ZMQ state publisher."""
     print("="*60)
     print("ZMQ Connection Test")
