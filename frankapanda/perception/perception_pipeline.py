@@ -22,6 +22,7 @@ import time
 import signal
 import sys
 from pathlib import Path
+from robo_utils.conversion_utils import transform_pcd
 
 # Global flag for graceful shutdown
 shutdown_requested = False
@@ -180,6 +181,11 @@ def run_pipeline_iteration(receiver, publisher, bounds, num_points, receive_port
 
     pcd_filtered, rgb_filtered = apply_spatial_bounds(pcd_combined, rgb_combined, bounds)
     print(f"{iter_prefix}After bounds filtering: {len(pcd_filtered)} points")
+
+    # Apply correction: 
+    T = np.eye(4)
+    T[:3, -1] = np.array([0.035, 0.05, 0.07])
+    pcd_filtered = transform_pcd(pcd_filtered, T)
 
     # FPS downsampling
     print("\n" + "="*60)

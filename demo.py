@@ -17,12 +17,16 @@ Usage:
 """
 
 import numpy as np
+import torch
 import time
-from robo_utils.visualization.plotting import plot_pcd
+from scipy.spatial.transform import Rotation as R
+from robo_utils.visualization.plotting import plot_pcd, make_gripper_visualization
+from robo_utils.conversion_utils import pose_to_transformation, transform_pcd, rotate_pose_around_local_x
 
 # Import from frankapanda package
 from frankapanda import FrankaPandaController
 from frankapanda.perception import PerceptionPipeline
+from frankapanda.motionplanner import MotionPlanner
 
 
 def main():
@@ -33,8 +37,8 @@ def main():
     # Initialize perception pipeline client
     perception = PerceptionPipeline(publish_port=6556, timeout_ms=10000)
 
-    # Get current robot state
-    gripper_pose = controller.get_gripper_pose(as_transform=False, format='wxyz')
+    current_joints = controller.get_robot_joints()
+    current_joints = torch.tensor(current_joints, dtype=torch.float32, device="cuda:0")
 
     # Capture point cloud
     print("4. Capturing point cloud from dual cameras...")
@@ -44,9 +48,53 @@ def main():
         print("Make sure the perception pipeline is running!")
         return
 
+    # controller.move_to_joints(controller.home_joints)
+
+    # T = np.eye(4)
+    # T[:3, -1] = np.array([0.035, 0.05, 0.07])
+    # theta_y = np.deg2rad(5) 
+    # rot_y = R.from_euler('y', theta_y).as_matrix()
+    # rot_x = R.from_euler('x', theta_x).as_matrix()
+    # rot_combined = rot_x @ rot_y  # Apply Y first, then X
+    # T[:3, :3] = rot_combined
+
+    # new_pcd = transform_pcd(pcd, T)
+
+    # Initialize motion planner
+    motion_planner = MotionPlanner(pcd)
+
+    # Get current robot state
+    # gripper_pose = controller.get_gripper_pose(as_transform=False, format='wxyz')
+    gripper_pose = motion_planner.fk(current_joints).cpu().numpy()
+    # gripper_pose = rotate_pose_around_local_x(gripper_pose, np.deg2rad(10), format='wxyz')
+    gripper_transform = pose_to_transformation(gripper_pose, format='wxyz')
+    # rot_z = np.array([[0, -1, 0],
+    #                   [1, 0, 0],
+    #                   [0, 0, 1]]).T
+    # # gripper_transform[:3, :3] = rot_z @ gripper_transform[:3, :3]
+    # gripper_transform[:3, 2] = - gripper_transform[:3, 2]
+    # gripper_transform[:3, 0] = - gripper_transform[:3, 0]
+
+    gripper_pose = controller.get_gripper_pose(as_transform=False, format='wxyz')
+    gripper_transform = pose_to_transformation(gripper_pose, format='wxyz')
+
+    # gripper_transform = controller.get_gripper_pose(as_transform=True)
+
+    gripper_points, gripper_colors = make_gripper_visualization(
+        rotation=gripper_transform[:3, :3],
+        translation=gripper_transform[:3, 3],
+        length=0.05,
+        density=50,
+        color=(1, 0, 0)
+    )
+
+    combined_pcd = np.vstack([pcd, gripper_points])
+    combined_rgb = np.vstack([rgb, gripper_colors])
+
     # Visualize point cloud
 
-    plot_pcd(pcd, rgb, base_frame=True)
+    # motion_planner.visualize_world_and_robot(current_joints)
+    plot_pcd(combined_pcd, combined_rgb, base_frame=True)
 
     # Demo robot movement
     controller.move_to_joints(controller.home_joints)

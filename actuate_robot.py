@@ -9,6 +9,11 @@ robot_interface = FrankaInterface(
     use_visualizer=False
 )
 
+controller_type = "JOINT_POSITION"
+controller_cfg = YamlConfig(
+    f"{config_path}/joint-position-controller.yml"
+).as_easydict()
+
 # These are home joints:
 target_joint_positions = [
     0.09162008114028396,
