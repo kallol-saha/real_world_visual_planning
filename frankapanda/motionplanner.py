@@ -101,6 +101,15 @@ class MotionPlanner:
             pose_cost_metric=self.only_xy_translation_constraint,          
         )
 
+        self.only_z_rot_and_xy_translation_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([1, 1, 0, 0, 0, 1], device="cuda:0"),
+            project_to_goal_frame=True  # with respect to the world frame
+        )
+        self.only_z_rot_and_xy_translation_plan_config = MotionGenPlanConfig(
+            max_attempts=100,
+            pose_cost_metric=self.only_xy_translation_constraint,          
+        )
+
         print("")
 
         self.links = [
@@ -168,12 +177,29 @@ class MotionPlanner:
             dims = [0.7, 0.7, 0.1]
         )
 
+        # Dummy obstacles for forcing intermediate poses (disabled by default)
+        # Blocks shelf side of table: y from -0.05 to 0.7
+        self.shelf_side_blocker = Cuboid(
+            name = "shelf_side_blocker",
+            pose = [0.56, 0.4, 0.3, 1, 0, 0, 0],  # center at y=0.325, z=0.3
+            dims = [0.7, 0.75, 0.5]  # spans y=-0.05 to y=0.7, z=0.05 to z=0.55
+        )
+
+        # Blocks object area on table: y from -0.52 to -0.05, z up to 0.3
+        self.object_area_blocker = Cuboid(
+            name = "object_area_blocker",
+            pose = [0.5, -0.285, 0.05, 1, 0, 0, 0],  # center at y=-0.285, z=0.165
+            dims = [1.0, 0.47, 0.15]  # spans y=-0.52 to y=-0.05, z=0.03 to z=0.3
+        )
+
         self.world_config.add_obstacle(self.back_wall)
         self.world_config.add_obstacle(self.table)
         self.world_config.add_obstacle(self.front_wall)
         self.world_config.add_obstacle(self.pointcloud_mesh)
         self.world_config.add_obstacle(self.right_wall)
         self.world_config.add_obstacle(self.shelf_top)
+        self.world_config.add_obstacle(self.shelf_side_blocker)
+        self.world_config.add_obstacle(self.object_area_blocker)
 
         motion_gen_config = MotionGenConfig.load_from_robot_config(
             robot_file,
@@ -190,7 +216,22 @@ class MotionPlanner:
 
         # self.motion_gen.warmup(enable_graph=True, n_goalset=100)
         self.motion_gen.warmup(n_goalset=200)
-       
+
+        # Disable dummy blockers by default
+        self.motion_gen.world_coll_checker.enable_obstacle(enable=False, name="shelf_side_blocker")
+        self.motion_gen.world_coll_checker.enable_obstacle(enable=False, name="object_area_blocker")
+
+    def enable_intermediate_pose_blockers(self, enable: bool = True):
+        """
+        Enable or disable the dummy obstacles that force intermediate poses
+        when moving to shelf insertion position.
+
+        Args:
+            enable: If True, enable the blockers. If False, disable them.
+        """
+        self.motion_gen.world_coll_checker.enable_obstacle(enable=enable, name="shelf_side_blocker")
+        self.motion_gen.world_coll_checker.enable_obstacle(enable=enable, name="object_area_blocker")
+
     def set_collision_world_components(
         self,  
         enable: bool,

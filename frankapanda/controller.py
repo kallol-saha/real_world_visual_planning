@@ -122,29 +122,20 @@ class FrankaPandaController:
                 controller_cfg=self.joint_controller_cfg,
             )
     
-    def move_to_joints(self, target_joints: np.ndarray, max_iterations: int = 100):
+    def move_to_joints(self, target_joints: np.ndarray, gripper_state: int, max_iterations: int = 100):
 
         assert type(target_joints) == np.ndarray, "Target joints must be a numpy array"
         assert target_joints.shape == (7,), "Target joints must be a 7D array"
-        
-        gripper_state = self.get_gripper_state()
+
 
         for _ in range(max_iterations):
 
             current_joints = self.get_robot_joints()
 
-            if gripper_state == OPEN:
-                gripper_state = self.close_gripper_action
-            elif gripper_state == CLOSED:
-                gripper_state = self.open_gripper_action
-
             joint_error = np.max(np.abs(current_joints - target_joints))
             if joint_error < 1e-3:
                 break
 
-            # TODO: Hard-coding to always keep gripper open
-            gripper_state = self.open_gripper_action
-            
             action = np.concatenate([target_joints, [gripper_state]])
             action = action.tolist()
 
@@ -154,19 +145,19 @@ class FrankaPandaController:
                 controller_cfg=self.joint_controller_cfg,
             )
 
-    def move_along_trajectory(self, trajectory: np.ndarray):
+    def move_along_trajectory(self, trajectory: np.ndarray, gripper_state: int):
         """
         Move the robot along a joint trajectory.
 
         Args:
             trajectory: (N, 7) array of joint positions for each waypoint
-            max_iterations_per_waypoint: Maximum control iterations per waypoint
+            gripper_state: Gripper state to maintain during trajectory execution
         """
         assert type(trajectory) == np.ndarray, "Trajectory must be a numpy array"
         assert trajectory.ndim == 2 and trajectory.shape[1] == 7, "Trajectory must be an (N, 7) array"
 
         for target_joints in trajectory:
-            self.move_to_joints(target_joints)
+            self.move_to_joints(target_joints, gripper_state)
 
     def osc_move(self, target_pose, num_steps):
         """
