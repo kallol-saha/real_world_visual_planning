@@ -116,6 +116,8 @@ def main():
     # TODO: Plan between these
     # TODO: Reverse the plan after placing to come back to inter_pose2
     # TODO: Close and rotate the gripper, then plan forward across z-axis
+
+    # TODO: 2 more demos: Pushing left, and Pushing right as skills.
     
     trajectories, success = motion_planner.plan_to_goal_poses(
         current_joints=current_joints.unsqueeze(0),
