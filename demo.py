@@ -28,6 +28,7 @@ from frankapanda import FrankaPandaController
 from frankapanda.perception import PerceptionPipeline
 from frankapanda.motionplanner import MotionPlanner
 
+EE_LINK_CENTER_TO_GRIPPER_TIP = 0.105
 
 def main():
 
@@ -37,9 +38,6 @@ def main():
     # Initialize perception pipeline client
     perception = PerceptionPipeline(publish_port=6556, timeout_ms=10000)
 
-    current_joints = controller.get_robot_joints()
-    current_joints = torch.tensor(current_joints, dtype=torch.float32, device="cuda:0")
-
     # Capture point cloud
     print("4. Capturing point cloud from dual cameras...")
     try:
@@ -48,7 +46,10 @@ def main():
         print("Make sure the perception pipeline is running!")
         return
 
-    # controller.move_to_joints(controller.home_joints)
+    controller.move_to_joints(controller.home_joints)
+
+    current_joints = controller.get_robot_joints()
+    current_joints = torch.tensor(current_joints, dtype=torch.float32, device="cuda:0")
 
     # T = np.eye(4)
     # T[:3, -1] = np.array([0.035, 0.05, 0.07])
@@ -67,18 +68,7 @@ def main():
     # gripper_pose = controller.get_gripper_pose(as_transform=False, format='wxyz')
     gripper_pose = motion_planner.fk(current_joints).cpu().numpy()
     # gripper_pose = rotate_pose_around_local_x(gripper_pose, np.deg2rad(10), format='wxyz')
-    gripper_transform = pose_to_transformation(gripper_pose, format='wxyz')
-    # rot_z = np.array([[0, -1, 0],
-    #                   [1, 0, 0],
-    #                   [0, 0, 1]]).T
-    # # gripper_transform[:3, :3] = rot_z @ gripper_transform[:3, :3]
-    # gripper_transform[:3, 2] = - gripper_transform[:3, 2]
-    # gripper_transform[:3, 0] = - gripper_transform[:3, 0]
-
-    gripper_pose = controller.get_gripper_pose(as_transform=False, format='wxyz')
-    gripper_transform = pose_to_transformation(gripper_pose, format='wxyz')
-
-    # gripper_transform = controller.get_gripper_pose(as_transform=True)
+    gripper_transform= pose_to_transformation(gripper_pose, format='wxyz')
 
     gripper_points, gripper_colors = make_gripper_visualization(
         rotation=gripper_transform[:3, :3],
@@ -94,9 +84,33 @@ def main():
     # Visualize point cloud
 
     # motion_planner.visualize_world_and_robot(current_joints)
-    plot_pcd(combined_pcd, combined_rgb, base_frame=True)
+    # plot_pcd(combined_pcd, combined_rgb, base_frame=True)
+
+
+    # gripper_transform = controller.get_gripper_pose(as_transform=True)
+
+    target_shelf_pose = torch.tensor(
+        [0.53719085, -0.06148829, 0.4583545, 0.5144139, -0.50486636, -0.47892126, -0.5011215],
+        dtype=torch.float32,
+        device="cuda:0"
+    )
+
+    target_shelf_transform = pose_to_transformation(target_shelf_pose.cpu().numpy(), format='wxyz')
+    
+    trajectories, success = motion_planner.plan_to_goal_poses(
+        current_joints=current_joints.unsqueeze(0),
+        goal_poses=target_shelf_pose.unsqueeze(0)
+    )
+
+    print(success)
 
     # Demo robot movement
+    traj = trajectories[0].cpu().numpy()
+    # controller.move_along_trajectory(traj)
+    for target_joints in traj:
+        controller.move_to_joints(target_joints)
+        time.sleep(0.1)
+
     controller.move_to_joints(controller.home_joints)
     controller.open_gripper()
 

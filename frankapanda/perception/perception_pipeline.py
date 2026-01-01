@@ -257,7 +257,7 @@ def main():
     bounds = {
         'x': [0.2, 0.8],
         'y': [-0.5, 0.5],
-        'z': [-0.1, 0.7]
+        'z': [-0.03, 0.7]
     }
 
     # Setup ZMQ receiver socket (PULL mode)

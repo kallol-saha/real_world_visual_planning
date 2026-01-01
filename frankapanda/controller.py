@@ -34,13 +34,13 @@ class FrankaPandaController:
 
         # Changed to this for shelf packing
         self.home_joints = np.array([
-            -0.83088868,
-            0.08609554,
-            0.09999037,
-            -2.22055988,
-            -0.05393224,
-            2.32607312,
-            0.35714266,
+            -1.3159,
+            -0.4246,
+             0.1067,
+            -2.7110,
+            -0.0562,
+             2.3219,
+             0.7518,
         ])
             # 0.09162008114028396,
             # -0.19826458111314524,
@@ -54,11 +54,18 @@ class FrankaPandaController:
         self.open_gripper_action = 1.0    # This is OPEN
         self.close_gripper_action = 0.0    # This is CLOSED
     
+    def check_joint_position_violation(self):
+
+        violation = self.robot_interface._state_buffer[-1].last_motion_errors.joint_position_limits_violation
+        return violation
+    
     def get_robot_joints(self) -> np.ndarray:
 
         while True:
             if len(self.robot_interface._state_buffer) > 0:
                 robot_joints = self.robot_interface._state_buffer[-1].q
+                if self.check_joint_position_violation():
+                    print("Joint position violation detected!")
                 return np.array(robot_joints)
             print("Waiting for robot joints...")
     
@@ -68,6 +75,8 @@ class FrankaPandaController:
                 joint_positions = self.robot_interface._state_buffer[-1].q
                 gripper_state = self.get_gripper_state()
                 qpos = np.concatenate([joint_positions, [gripper_state]])
+                if self.check_joint_position_violation():
+                    print("Joint position violation detected!")
                 return qpos
             print("Waiting for robot qpos...")
     
@@ -76,6 +85,8 @@ class FrankaPandaController:
             if len(self.robot_interface._state_buffer) > 0:
                 gripper_pose = self.robot_interface._state_buffer[-1].O_T_EE
                 gripper_pose = np.array(gripper_pose).reshape(4, 4).T
+                if self.check_joint_position_violation():
+                    print("Joint position violation detected!")
                 if not as_transform:
                     gripper_pose = transformation_to_pose(gripper_pose, format=format)
                 return gripper_pose
@@ -122,9 +133,9 @@ class FrankaPandaController:
 
             current_joints = self.get_robot_joints()
 
-            if gripper_state == CLOSED:
+            if gripper_state == OPEN:
                 gripper_state = self.close_gripper_action
-            elif gripper_state == OPEN:
+            elif gripper_state == CLOSED:
                 gripper_state = self.open_gripper_action
 
             joint_error = np.max(np.abs(current_joints - target_joints))
@@ -139,6 +150,39 @@ class FrankaPandaController:
                 action=action,
                 controller_cfg=self.joint_controller_cfg,
             )
+
+    def move_along_trajectory(self, trajectory: np.ndarray, max_iterations_per_waypoint: int = 100):
+        """
+        Move the robot along a joint trajectory.
+
+        Args:
+            trajectory: (N, 7) array of joint positions for each waypoint
+            max_iterations_per_waypoint: Maximum control iterations per waypoint
+        """
+        assert type(trajectory) == np.ndarray, "Trajectory must be a numpy array"
+        assert trajectory.ndim == 2 and trajectory.shape[1] == 7, "Trajectory must be an (N, 7) array"
+
+        gripper_state = self.get_gripper_state()
+        if gripper_state == OPEN:
+            gripper_action = self.close_gripper_action
+        elif gripper_state == CLOSED:
+            gripper_action = self.open_gripper_action
+
+        final_joints = trajectory[-1]
+
+        for waypoint_idx, target_joints in enumerate(trajectory):
+            current_joints = self.get_robot_joints()
+
+            action = np.concatenate([target_joints, [gripper_action]])
+            action = action.tolist()
+
+            self.robot_interface.control(
+                controller_type=self.joint_controller_type,
+                action=action,
+                controller_cfg=self.joint_controller_cfg,
+            )
+
+        self.move_to_joints(final_joints)
 
     def osc_move(self, target_pose, num_steps):
         """

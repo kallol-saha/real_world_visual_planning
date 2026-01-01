@@ -7,6 +7,7 @@ import gc
 import copy
 
 # Third Party
+from sympy.printing.latex import true
 import torch
 import numpy as np
 import trimesh
@@ -64,29 +65,24 @@ class MotionPlanner:
         self.pointcloud = pointcloud
         self.reset_planner(pointcloud)
 
-        # self.grasp_approach_constraint = PoseCostMetric.create_grasp_approach_metric(
-        #     offset_position=GRASP_DEPTH,
-        #     linear_axis=2,
-        #     tstep_fraction=0.8,
-        # )
-
-        self.z_axis_constraint = PoseCostMetric(
-            hold_vec_weight = torch.tensor([1, 1, 1, 1, 1, 0], device="cuda:0")
+        self.along_z_axis_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([1, 1, 1, 1, 1, 0], device="cuda:0"),
+            project_to_goal_frame=True  # with respect to the goal frame
         )
 
-        self.position_only_constraint = PoseCostMetric(
-            reach_partial_pose=True,
-            reach_vec_weight = torch.tensor([0, 0, 0, 1, 1, 1], device="cuda:0")
+        self.lift_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([1, 1, 1, 1, 1, 0], device="cuda:0"),
+            project_to_goal_frame=False  # with respect to the goal frame
         )
 
-        self.z_axis_free_constraint = PoseCostMetric(
-            reach_partial_pose=True,
-            reach_vec_weight = torch.tensor([1, 1, 0, 1, 1, 1], device="cuda:0")
+        self.only_rotation_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([0, 0, 0, 1, 1, 1], device="cuda:0"),
+            project_to_goal_frame=True  # with respect to the goal frame
         )
 
-        self.x_axis_free_constraint = PoseCostMetric(
-            reach_partial_pose=True,
-            reach_vec_weight = torch.tensor([0, 1, 1, 1, 1, 1], device="cuda:0")
+        self.only_translation_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([1, 1, 1, 0, 0, 0], device="cuda:0"),
+            project_to_goal_frame=True  # with respect to the goal frame
         )
 
         print("")
@@ -125,7 +121,7 @@ class MotionPlanner:
 
         self.table = Cuboid(
             name = "table",
-            pose = [0.5, 0., -(0.1 + 0.2), 1, 0, 0, 0],
+            pose = [0.5, 0., -(-0.03 + 0.2), 1, 0, 0, 0],
             dims = [1., 1.4, 0.4]
         )
 
@@ -138,14 +134,8 @@ class MotionPlanner:
         # These are from robot perspective
         self.right_wall = Cuboid(
             name = "right_wall",
-            pose = [0.5, 0., 0.5, 1, 0, 0, 0],
-            dims = [0.2, 1.4, 1.0]
-        )
-
-        self.left_wall = Cuboid(
-            name = "left_wall",
-            pose = [0.5, 0., 0.5, 1, 0, 0, 0],
-            dims = [0.2, 1.4, 1.0]
+            pose = [0.5, -(0.52 + 0.2/2), 0.5, 1, 0, 0, 0],
+            dims = [1., 0.2, 1.0]
         )
 
         self.pointcloud_mesh = Mesh.from_pointcloud(
@@ -156,12 +146,18 @@ class MotionPlanner:
             filter_close_points=0.3,
         )
 
+        self.shelf_top = Cuboid(
+            name = "table",
+            pose = [0.56, 0.45, (0.58 + 0.1/2), 1, 0, 0, 0],
+            dims = [0.7, 0.7, 0.1]
+        )
+
         self.world_config.add_obstacle(self.back_wall)
         self.world_config.add_obstacle(self.table)
         self.world_config.add_obstacle(self.front_wall)
         self.world_config.add_obstacle(self.pointcloud_mesh)
-        # self.world_config.add_obstacle(self.right_wall)
-        # self.world_config.add_obstacle(self.left_wall)
+        self.world_config.add_obstacle(self.right_wall)
+        self.world_config.add_obstacle(self.shelf_top)
 
         motion_gen_config = MotionGenConfig.load_from_robot_config(
             robot_file,
@@ -507,7 +503,7 @@ class MotionPlanner:
             goal_pose=curobo_goal_poses, 
             plan_config=plan_config
         )
-        self.clear_gpu_memory()
+        # self.clear_gpu_memory()
 
         # Get successful indices and solutions, then store them in the output tensor:
         success = plan_result.success.to(current_joints.device)    # (batch_size,) boolean tensor
@@ -516,7 +512,11 @@ class MotionPlanner:
         if len(successful_indices) == 0:
             return trajectories, success
 
-        trajectories[successful_indices] = plan_result.optimized_plan.position[successful_indices].clone()
+        if plan_result.optimized_plan.position.ndim == 2:   # Account for batch size of 1
+            optimized_plan = plan_result.optimized_plan.position.unsqueeze(0).clone()
+        else:
+            optimized_plan = plan_result.optimized_plan.position.clone()
+        trajectories[successful_indices] = optimized_plan[successful_indices].clone()
 
         # Re-enable collision checking for relevant world components
         self.set_collision_world_components(
