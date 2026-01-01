@@ -69,7 +69,7 @@ def main():
         print("Make sure the perception pipeline is running!")
         return
 
-    # controller.move_to_joints(controller.home_joints)
+    controller.move_to_joints(controller.home_joints)
 
     current_joints = controller.get_robot_joints()
     current_joints = torch.tensor(current_joints, dtype=torch.float32, device="cuda:0")
@@ -79,7 +79,7 @@ def main():
 
     # Get current gripper pose
     gripper_pose = motion_planner.fk(current_joints).cpu().numpy()
-    visualize_gripper_in_pointcloud(pcd, gripper_pose, base_frame=True)
+    visualize_gripper_in_pointcloud(pcd, gripper_pose, rgb=rgb, base_frame=True)
 
     # Grasp Pose
     grasp_pose = torch.tensor(
@@ -90,28 +90,34 @@ def main():
 
     # Pre Grasp Pose
     pre_grasp_pose = move_pose_along_local_z(grasp_pose, -0.12)
-
-    # Lift Pose
-    lift_pose = grasp_pose.clone()
-    lift_pose[2] = lift_pose[2] + 0.15
+    pre_grasp_pose = torch.tensor(pre_grasp_pose, dtype=torch.float32, device="cuda:0")
 
     # Target Shelf Pose
     # TODO: Remember to change this to edge of the shelf, not inside it
     target_shelf_pose = torch.tensor(
-        [0.53719085, -0.06148829, 0.4583545, 0.0, 0.0, 0.7071, 0.7071],
+        [0.53719085, -0.167, 0.4583545, 0.0, 0.0, 0., 1.],
         dtype=torch.float32,
         device="cuda:0"
     )
 
+    # Lift Pose
+    lift_pose = grasp_pose.clone()
+    lift_pose[2] = target_shelf_pose[2]
+
     # Intermediate Pose 1 to move by translating only (because we have object in hand, we don't want to hit anything)
     inter_pose1 = lift_pose.clone()
     inter_pose1[0] = target_shelf_pose[0]   # X value same as target
-    inter_pose1[1] = 0.25   # Hard-coded retraction Y-value before inserting into shelf
+    inter_pose1[1] = -0.25   # Hard-coded retraction Y-value before inserting into shelf
     inter_pose1[2] = target_shelf_pose[2]   # Z value (height) same as target
 
     # Intermediate Pose 2 to rotate in place only
     inter_pose2 = inter_pose1.clone()
     inter_pose2[3:] = target_shelf_pose[3:]
+
+    all_poses = [pre_grasp_pose, grasp_pose, lift_pose, inter_pose1, inter_pose2]
+    # Visualize all poses in pointcloud
+    # for pose in all_poses:
+    #     visualize_gripper_in_pointcloud(pcd, pose.cpu().numpy(), rgb=rgb, base_frame=True)
 
     # TODO: Plan between these
     # TODO: Reverse the plan after placing to come back to inter_pose2
@@ -119,19 +125,66 @@ def main():
 
     # TODO: 2 more demos: Pushing left, and Pushing right as skills.
     
-    trajectories, success = motion_planner.plan_to_goal_poses(
+    controller.open_gripper()
+    
+    pre_grasp_trajectories, pre_grasp_success = motion_planner.plan_to_goal_poses(
         current_joints=current_joints.unsqueeze(0),
-        goal_poses=target_shelf_pose.unsqueeze(0)
+        goal_poses=pre_grasp_pose.unsqueeze(0),
     )
+    print(pre_grasp_success)
 
-    print(success)
+    grasp_trajectories, grasp_success = motion_planner.plan_to_goal_poses(
+        current_joints=pre_grasp_trajectories[0, -1].unsqueeze(0),
+        goal_poses=grasp_pose.unsqueeze(0),
+        disable_collision_links=motion_planner.links[-5:],   # Disable collision with gripper and fingers
+        plan_config=motion_planner.along_z_axis_plan_config   # Plan along z-axis only
+    )
+    print(grasp_success)
 
-    # Demo robot movement
-    traj = trajectories[0].cpu().numpy()
-    # controller.move_along_trajectory(traj)
-    for target_joints in traj:
-        controller.move_to_joints(target_joints)
-        time.sleep(0.1)
+    lift_trajectories, lift_success = motion_planner.plan_to_goal_poses(
+        current_joints=grasp_trajectories[0, -1].unsqueeze(0),
+        goal_poses=lift_pose.unsqueeze(0),
+        disable_collision_links=motion_planner.links[-5:],   # Disable collision with gripper and fingers
+        plan_config=motion_planner.lift_plan_config   # Plan along world frame z-axis only
+    )
+    print(lift_success)
+
+    inter_pose1_trajectories, inter_pose1_success = motion_planner.plan_to_goal_poses(
+        current_joints=lift_trajectories[0, -1].unsqueeze(0),
+        goal_poses=inter_pose1.unsqueeze(0),
+        plan_config=motion_planner.only_xy_translation_plan_config   # Plan along world frame x, y only
+    )
+    print(inter_pose1_success)
+
+    inter_pose2_trajectories, inter_pose2_success = motion_planner.plan_to_goal_poses(
+        current_joints=inter_pose1_trajectories[0, -1].unsqueeze(0),
+        goal_poses=inter_pose2.unsqueeze(0),
+        plan_config=motion_planner.only_rotation_plan_config   # Plan along goal frame rotation only
+    )
+    print(inter_pose2_success)
+
+    target_trajectories, target_success = motion_planner.plan_to_goal_poses(
+        current_joints=inter_pose2_trajectories[0, -1].unsqueeze(0),
+        goal_poses=target_shelf_pose.unsqueeze(0),
+        disable_collision_links=motion_planner.links[-5:],   # Disable collision with gripper and fingers
+        plan_config=motion_planner.along_z_axis_plan_config   # Plan along z-axis only
+    )
+    print(target_success)
+
+    success = pre_grasp_success & grasp_success & lift_success & inter_pose1_success & inter_pose2_success & target_success
+
+    trajectories = [
+        pre_grasp_trajectories[0].cpu().numpy(),
+        grasp_trajectories[0].cpu().numpy(),
+        lift_trajectories[0].cpu().numpy(),
+        inter_pose1_trajectories[0].cpu().numpy(),
+        inter_pose2_trajectories[0].cpu().numpy(),
+        target_trajectories[0].cpu().numpy()
+    ]
+
+    traj = np.concatenate(trajectories, axis=0)
+    if success:
+        controller.move_along_trajectory(traj)
 
     controller.move_to_joints(controller.home_joints)
     controller.open_gripper()

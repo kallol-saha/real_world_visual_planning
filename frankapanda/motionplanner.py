@@ -69,20 +69,36 @@ class MotionPlanner:
             hold_vec_weight = torch.tensor([1, 1, 1, 1, 1, 0], device="cuda:0"),
             project_to_goal_frame=True  # with respect to the goal frame
         )
+        self.along_z_axis_plan_config = MotionGenPlanConfig(
+            max_attempts=100,
+            pose_cost_metric=self.along_z_axis_constraint,          
+        )
 
         self.lift_constraint = PoseCostMetric(
             hold_vec_weight = torch.tensor([1, 1, 1, 1, 1, 0], device="cuda:0"),
-            project_to_goal_frame=False  # with respect to the goal frame
+            project_to_goal_frame=False  # with respect to the world frame
+        )
+        self.lift_plan_config = MotionGenPlanConfig(
+            max_attempts=100,
+            pose_cost_metric=self.lift_constraint,          
         )
 
         self.only_rotation_constraint = PoseCostMetric(
-            hold_vec_weight = torch.tensor([0, 0, 0, 1, 1, 1], device="cuda:0"),
-            project_to_goal_frame=True  # with respect to the goal frame
+            hold_vec_weight = torch.tensor([0, 0, 0, 0, 1, 1], device="cuda:0"),
+            project_to_goal_frame=False  # with respect to the world frame
+        )
+        self.only_rotation_plan_config = MotionGenPlanConfig(
+            max_attempts=100,
+            pose_cost_metric=self.only_rotation_constraint,          
         )
 
-        self.only_translation_constraint = PoseCostMetric(
-            hold_vec_weight = torch.tensor([1, 1, 1, 0, 0, 0], device="cuda:0"),
-            project_to_goal_frame=True  # with respect to the goal frame
+        self.only_xy_translation_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([1, 1, 1, 0, 0, 1], device="cuda:0"),
+            project_to_goal_frame=False  # with respect to the world frame
+        )
+        self.only_xy_translation_plan_config = MotionGenPlanConfig(
+            max_attempts=100,
+            pose_cost_metric=self.only_xy_translation_constraint,          
         )
 
         print("")

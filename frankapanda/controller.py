@@ -142,6 +142,9 @@ class FrankaPandaController:
             if joint_error < 1e-3:
                 break
 
+            # TODO: Hard-coding to always keep gripper open
+            gripper_state = self.open_gripper_action
+            
             action = np.concatenate([target_joints, [gripper_state]])
             action = action.tolist()
 
@@ -151,7 +154,7 @@ class FrankaPandaController:
                 controller_cfg=self.joint_controller_cfg,
             )
 
-    def move_along_trajectory(self, trajectory: np.ndarray, max_iterations_per_waypoint: int = 100):
+    def move_along_trajectory(self, trajectory: np.ndarray):
         """
         Move the robot along a joint trajectory.
 
@@ -162,27 +165,8 @@ class FrankaPandaController:
         assert type(trajectory) == np.ndarray, "Trajectory must be a numpy array"
         assert trajectory.ndim == 2 and trajectory.shape[1] == 7, "Trajectory must be an (N, 7) array"
 
-        gripper_state = self.get_gripper_state()
-        if gripper_state == OPEN:
-            gripper_action = self.close_gripper_action
-        elif gripper_state == CLOSED:
-            gripper_action = self.open_gripper_action
-
-        final_joints = trajectory[-1]
-
-        for waypoint_idx, target_joints in enumerate(trajectory):
-            current_joints = self.get_robot_joints()
-
-            action = np.concatenate([target_joints, [gripper_action]])
-            action = action.tolist()
-
-            self.robot_interface.control(
-                controller_type=self.joint_controller_type,
-                action=action,
-                controller_cfg=self.joint_controller_cfg,
-            )
-
-        self.move_to_joints(final_joints)
+        for target_joints in trajectory:
+            self.move_to_joints(target_joints)
 
     def osc_move(self, target_pose, num_steps):
         """
@@ -240,7 +224,7 @@ class FrankaPandaController:
         target_delta_pose,
         num_steps,
         num_additional_steps=0,
-    ):
+        ):
         """
         Move to a target pose specified as a delta from current pose.
         
