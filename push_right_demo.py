@@ -1,9 +1,10 @@
 """
-Push Forward Demo: FrankaPanda Push Action
+Push Left Demo: FrankaPanda Push Left Action
 
-This script demonstrates a simple push forward action:
+This script demonstrates a push left action:
 1. Move to pre-push pose
-2. Push forward along z-axis
+2. Move to push start pose (along z-axis)
+3. Push left along y-axis
 
 Before running:
 1. Make sure the perception pipeline is running:
@@ -12,18 +13,21 @@ Before running:
 2. Make sure the robot is connected and powered on
 
 Usage:
-    python push_forward_demo.py
+    python push_left_demo.py
 """
 
 import numpy as np
 import torch
-from robo_utils.conversion_utils import move_pose_along_local_z, pose_to_transformation
+from robo_utils.conversion_utils import move_pose_along_local_y, pose_to_transformation
 from robo_utils.visualization.plotting import plot_pcd, make_gripper_visualization
 
 # Import from frankapanda package
 from frankapanda import FrankaPandaController
 from frankapanda.perception import PerceptionPipeline
 from frankapanda.motionplanner import MotionPlanner
+
+# Pre-push offset along world y-axis
+PRE_PUSH_Y_OFFSET = -0.1  # Move back along y before pushing
 
 
 def visualize_poses_in_pointcloud(pcd, poses, rgb=None, colors=None):
@@ -71,53 +75,39 @@ def main():
         print("Make sure the perception pipeline is running!")
         return
 
-    controller.close_gripper(num_steps=80)
-    controller.move_to_joints(controller.home_joints, controller.close_gripper_action)
-
+    # Get current joints (robot is already at push start pose)
     current_joints = controller.get_robot_joints()
     current_joints = torch.tensor(current_joints, dtype=torch.float32, device="cuda:0")
 
     # Initialize motion planner
     motion_planner = MotionPlanner(pcd)
 
-    # Pre-push and push poses
-    pre_push_pose = torch.tensor(
-        [0.519, -0.25, 0.35, -0.5, 0.5, 0.5, 0.5],
-        dtype=torch.float32,
-        device="cuda:0"
-    )
-    push_pose = move_pose_along_local_z(pre_push_pose, 0.33)
-    push_pose = torch.tensor(push_pose, dtype=torch.float32, device="cuda:0")
+    # Get current pose via FK (this is push_start_pose)
+    push_start_pose = motion_planner.fk(current_joints)
 
-    # Visualize poses: red=pre_push, green=push
-    print("Visualizing poses: red=pre_push, green=push")
+    # Push end pose: push_start moved along local y-axis
+    push_end_pose = move_pose_along_local_y(push_start_pose, 0.2)
+    push_end_pose = torch.tensor(push_end_pose, dtype=torch.float32, device="cuda:0")
+
+    # Visualize poses: red=push_start, green=push_end
+    print("Visualizing poses: red=push_start, green=push_end")
     visualize_poses_in_pointcloud(
         pcd,
-        [pre_push_pose, push_pose],
+        [push_start_pose, push_end_pose],
         rgb=rgb,
         colors=[(1, 0, 0), (0, 1, 0)]
     )
 
-    # Plan to pre-push pose
-    pre_push_trajectories, pre_push_success = motion_planner.plan_to_goal_poses(
-        current_joints=current_joints.unsqueeze(0),
-        goal_poses=pre_push_pose.unsqueeze(0),
-    )
-    print(f"Pre-push planning success: {pre_push_success.item()}")
-
-    # Plan push motion
+    # Plan push motion (along y-axis, disable all links)
     push_trajectories, push_success = motion_planner.plan_to_goal_poses(
-        current_joints=pre_push_trajectories[0, -1].unsqueeze(0),
-        goal_poses=push_pose.unsqueeze(0),
+        current_joints=current_joints.unsqueeze(0),
+        goal_poses=push_end_pose.unsqueeze(0),
         disable_collision_links=motion_planner.links[:],
-        plan_config=motion_planner.along_z_axis_plan_config
+        plan_config=motion_planner.along_y_axis_plan_config
     )
     print(f"Push planning success: {push_success.item()}")
 
-    success = pre_push_success.item() & push_success.item()
-
-    if success:
-        controller.move_along_trajectory(pre_push_trajectories[0].cpu().numpy(), controller.close_gripper_action)
+    if push_success.item():
         controller.move_along_trajectory(push_trajectories[0].cpu().numpy(), controller.close_gripper_action)
 
     controller.move_to_joints(controller.home_joints, controller.close_gripper_action)

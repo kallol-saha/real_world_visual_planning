@@ -107,7 +107,17 @@ class MotionPlanner:
         )
         self.only_z_rot_and_xy_translation_plan_config = MotionGenPlanConfig(
             max_attempts=100,
-            pose_cost_metric=self.only_xy_translation_constraint,          
+            pose_cost_metric=self.only_xy_translation_constraint,
+        )
+
+        # Move along world y-axis only (hold rotation, x, z; free y)
+        self.along_y_axis_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([1, 1, 1, 1, 0, 1], device="cuda:0"),
+            project_to_goal_frame=False  # with respect to the world frame
+        )
+        self.along_y_axis_plan_config = MotionGenPlanConfig(
+            max_attempts=100,
+            pose_cost_metric=self.along_y_axis_constraint,
         )
 
         print("")
