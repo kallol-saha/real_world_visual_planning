@@ -96,6 +96,7 @@ def main():
     lift_pose[2] = lift_pose[2] + 0.15
 
     # Target Shelf Pose
+    # TODO: Remember to change this to edge of the shelf, not inside it
     target_shelf_pose = torch.tensor(
         [0.53719085, -0.06148829, 0.4583545, 0.0, 0.0, 0.7071, 0.7071],
         dtype=torch.float32,
@@ -113,6 +114,8 @@ def main():
     inter_pose2[3:] = target_shelf_pose[3:]
 
     # TODO: Plan between these
+    # TODO: Reverse the plan after placing to come back to inter_pose2
+    # TODO: Close and rotate the gripper, then plan forward across z-axis
     
     trajectories, success = motion_planner.plan_to_goal_poses(
         current_joints=current_joints.unsqueeze(0),
