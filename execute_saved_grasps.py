@@ -26,8 +26,19 @@ from frankapanda import FrankaPandaController
 #                                                                             #
 #   Match the env id used by infer_policy_value_demo.py when saving           #
 #   data/shelf_packing_scenes/env_<ENV_ID>/grasps_*.npz                       #
+#                                                                             #
+#   GRASP_SELECTION: optional dict {object_id: [grasp_indices]} restricting   #
+#   which grasps to replay. None -> replay every grasp marked successful      #
+#   (current default). Indices ignore the saved success flag, so you can      #
+#   force-replay a marked-failed grasp by listing it explicitly.              #
 # --------------------------------------------------------------------------- #
 ENV_ID = 0
+GRASP_SELECTION = {
+    0: [1], #[1, 2],     # blue and purple lego brick
+    1: [0], #[0, 1],     # green lego brick
+    2: [2], #[0, 2, 3],  # red and green lego
+    # 3: [0, 3, 4],  # green and blue lego
+}
 
 
 def _as_float_traj(t):
@@ -80,11 +91,27 @@ def main():
         target_label = str(data["target_label"]) if "target_label" in data.files else "?"
         success_idx = np.where(successes)[0]
 
-        print(f"\n=== object_id={object_id}  target='{target_label}'  "
-              f"successful={len(success_idx)}/{len(grasps)} ===")
+        if GRASP_SELECTION is not None:
+            if object_id not in GRASP_SELECTION:
+                print(f"\n=== object_id={object_id}  target='{target_label}'  "
+                      f"SKIPPED (not in GRASP_SELECTION) ===")
+                continue
+            requested = list(GRASP_SELECTION[object_id])
+            bad = [i for i in requested if not (0 <= i < len(grasps))]
+            if bad:
+                raise IndexError(
+                    f"object_id={object_id}: requested grasp ids {bad} out of "
+                    f"range; npz has {len(grasps)} grasps."
+                )
+            success_idx = np.asarray(requested, dtype=np.int64)
+            print(f"\n=== object_id={object_id}  target='{target_label}'  "
+                  f"replaying user-selected indices {requested} ===")
+        else:
+            print(f"\n=== object_id={object_id}  target='{target_label}'  "
+                  f"successful={len(success_idx)}/{len(grasps)} ===")
 
         if len(success_idx) == 0:
-            print("  no successful grasps; skipping.")
+            print("  no grasps to replay; skipping.")
             continue
 
         if args.dry_run:

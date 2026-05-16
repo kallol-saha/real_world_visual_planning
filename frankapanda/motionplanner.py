@@ -121,6 +121,16 @@ class MotionPlanner:
             pose_cost_metric=self.along_y_axis_constraint,
         )
 
+        # Move along world y- and z-axes, no rotation (hold rx, ry, rz, x; free y, z)
+        self.only_yz_translation_constraint = PoseCostMetric(
+            hold_vec_weight = torch.tensor([1, 1, 1, 1, 0, 0], device="cuda:0"),
+            project_to_goal_frame=False  # with respect to the world frame
+        )
+        self.only_yz_translation_plan_config = MotionGenPlanConfig(
+            max_attempts=100,
+            pose_cost_metric=self.only_yz_translation_constraint,
+        )
+
         print("")
 
         self.links = [
@@ -450,9 +460,9 @@ class MotionPlanner:
     # ================ PARALLEL PLANNING FUNCTIONS MULTI OBJECT ================ #
 
     def inverse_kinematics(
-        self, 
-        input_grasp_poses: torch.Tensor, 
-        objects_to_ignore: list[str] = [], 
+        self,
+        input_grasp_poses: torch.Tensor,
+        objects_to_ignore: list[str] = [],
         disable_collision_links: list[str] = ["attached_object"]
         ):
         """
@@ -495,10 +505,10 @@ class MotionPlanner:
         
         # Predefine the output joint states tensor:
         ik_solutions = torch.zeros((input_grasp_poses.shape[0], 7), device=input_grasp_poses.device, dtype=torch.float32)
-        
+
         # Convert to Pose
         ik_poses = Pose(position=input_grasp_poses[..., :3], quaternion=input_grasp_poses[..., 3:])
-        
+
         # Solve IK for the batch
         ik_result = self.motion_gen.ik_solver.solve_batch(ik_poses)
         self.clear_gpu_memory()
@@ -513,11 +523,11 @@ class MotionPlanner:
 
         # Re-enable collision checking for relevant world components
         self.set_collision_world_components(
-            enable=True, 
-            objects=objects_to_ignore, 
+            enable=True,
+            objects=objects_to_ignore,
             collision_links=disable_collision_links
         )
-            
+
         return ik_solutions, success
     
     def plan_to_goal_poses(
