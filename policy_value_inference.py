@@ -331,3 +331,89 @@ class PolicyValueInference:
             "centroid": centroid,
             "scale": scale,
         }
+
+    @torch.no_grad()
+    def score_value_batched(
+        self,
+        pcd_np: np.ndarray,
+        grasp_poses,
+        place_poses,
+        chunk_size: int = 16,
+        gripper_open: float = 0.0,
+        gripper_close: float = 1.0,
+    ):
+        """
+        Batched value scoring over K (grasp, place) action pairs sharing one
+        scene pcd. Each pose is a (7,) wxyz tensor/array in robot-base frame.
+        Pcd is centered/scaled once; positions are normalized with that same
+        centroid/scale, matching the training-time action convention.
+
+        Args:
+            pcd_np: (N, 3) scene point cloud in robot-base frame. NO target
+                mask; the value model takes raw xyz.
+            grasp_poses: list/array of K (7,) wxyz poses (robot frame).
+            place_poses: list/array of K (7,) wxyz poses (robot frame).
+            chunk_size: forward pass batch size.
+            gripper_open / gripper_close: appended as the 8th channel to the
+                grasp / place action vectors (matches the (8,) output of the
+                grasp + place policies).
+
+        Returns:
+            scores: (K,) torch.Tensor on cpu, each in [0, 1].
+        """
+        if self.value_model is None:
+            raise RuntimeError("score_value_batched called but value_model is None.")
+        if len(grasp_poses) != len(place_poses):
+            raise ValueError(
+                f"grasp_poses ({len(grasp_poses)}) and place_poses "
+                f"({len(place_poses)}) must have the same length."
+            )
+
+        K = len(grasp_poses)
+        if K == 0:
+            return torch.zeros((0,), dtype=torch.float32)
+
+        # Center + scale pcd once. Value model takes raw xyz (no mask channel).
+        pcd_t = torch.from_numpy(pcd_np).float()
+        pcd_norm, centroid, scale = _center_and_scale(pcd_t)
+        pcd_norm_dev = pcd_norm.unsqueeze(0).to(self.device)                # (1, N, 3)
+
+        # Normalize positions; build (K, 2, 8) action stack on cpu.
+        def _to_t(p):
+            if isinstance(p, torch.Tensor):
+                return p.detach().cpu().float()
+            if isinstance(p, np.ndarray):
+                return torch.from_numpy(p).float()
+            return torch.tensor(p, dtype=torch.float32)
+
+        grasp_acts = []
+        place_acts = []
+        for g, p in zip(grasp_poses, place_poses):
+            gt = _to_t(g)
+            pt = _to_t(p)
+            g_pos = (gt[:3] - centroid) / scale
+            p_pos = (pt[:3] - centroid) / scale
+            g_act = torch.cat([g_pos, gt[3:7], torch.tensor([gripper_close], dtype=torch.float32)])  # (8,)
+            p_act = torch.cat([p_pos, pt[3:7], torch.tensor([gripper_open], dtype=torch.float32)])   # (8,)
+            grasp_acts.append(g_act)
+            place_acts.append(p_act)
+        actions_all = torch.stack(
+            [torch.stack([g, p], dim=0) for g, p in zip(grasp_acts, place_acts)],
+            dim=0,
+        )                                                                    # (K, 2, 8)
+
+        scores = torch.empty((K,), dtype=torch.float32)
+        pbar = tqdm(total=K, desc="value scoring", unit="pair")
+        for start in range(0, K, chunk_size):
+            end = min(start + chunk_size, K)
+            k = end - start
+            pcd_chunk = pcd_norm_dev.expand(k, -1, -1).contiguous()         # (k, N, 3)
+            actions_chunk = actions_all[start:end].to(self.device)          # (k, 2, 8)
+            out = self.value_model(pcd=pcd_chunk, actions=actions_chunk)    # (k,) or (k, 1)
+            out = out.detach().cpu().float().view(-1)
+            scores[start:end] = out[:k]
+            del pcd_chunk, actions_chunk, out
+            torch.cuda.empty_cache()
+            pbar.update(k)
+        pbar.close()
+        return scores

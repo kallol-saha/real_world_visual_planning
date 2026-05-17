@@ -422,9 +422,9 @@ def main():
 
     # Spatial bounds: tight z = table -> roof so FPS keeps a clean 4096.
     bounds = {
-        'x': [0.2, 0.8],
-        'y': [-0.5, 0.5],
-        'z': [-0.03, 0.24],
+        'x': [0.3, 0.8],
+        'y': [-0.5, 0.35],
+        'z': [-0.03, 0.2],
     }
 
     # ZMQ sockets.
