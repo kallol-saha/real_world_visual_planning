@@ -34,17 +34,17 @@ from frankapanda import FrankaPandaController
 #   OBJECT_IDS: which object grasps_<id>.npz files to use (any subset).       #
 #   ENV_ID: matches env_<ENV_ID>/ folder under SAVE_DIR.                      #
 # --------------------------------------------------------------------------- #
-ENV_ID = 0
-OBJECT_IDS = [0, 1, 2]
+ENV_ID = 2
+OBJECT_IDS = [1, 2, 3]
 RANDOMIZE_OBJECT_ORDER = False   # False -> use OBJECT_IDS as given
 
 # Optional per-object grasp restriction. None -> all successful grasps are
 # eligible (current default). dict -> only listed indices are eligible
 # (bypasses the saved successes mask). Format: {object_id: [grasp_indices]}.
 GRASP_DICT = {
-    0: [1], #[1, 2],     # blue and purple lego brick
-    1: [0], #[0, 1],     # green lego brick
-    2: [2], #[0, 2, 3],  # red and green lego
+    2: [2], #[1, 2],     # blue and purple lego brick
+    1: [1], #[0, 1],     # green lego brick
+    3: [4], #[0, 2, 3],  # red and green lego
     # 3: [0, 3, 4],  # green and blue lego
 }
 
@@ -53,7 +53,7 @@ PUBLISH_PORT = 1235
 
 
 # Placement offsets — keep same as execute_placements.execute_placement.
-Z_OFFSET = 0.
+Z_OFFSET = -0.1
 Y_OFFSET = -0.3
 X_OFFSET = -0.1
 
@@ -81,6 +81,37 @@ def visualize_pose_on_pcd(pcd, pose, color=(0.0, 1.0, 1.0), length=0.05):
         color=color,
     )
     combined = np.vstack([pcd, pts])
+    plot_pcd(combined, base_frame=True)
+
+
+_POSE_COLORS = [
+    (1.0, 0.0, 0.0),  # red
+    (0.0, 1.0, 0.0),  # green
+    (0.0, 0.0, 1.0),  # blue
+    (1.0, 1.0, 0.0),  # yellow
+    (1.0, 0.0, 1.0),  # magenta
+    (0.0, 1.0, 1.0),  # cyan
+    (1.0, 0.5, 0.0),  # orange
+    (0.5, 0.0, 1.0),  # purple
+    (1.0, 0.75, 0.8), # pink
+]
+
+
+def visualize_poses_on_pcd(pcd, poses, length=0.05):
+    """Overlay all gripper widgets on a single pcd plot. poses: iterable of (7,) wxyz."""
+    combined = pcd.copy()
+    for i, pose in enumerate(poses):
+        if isinstance(pose, torch.Tensor):
+            pose = pose.detach().cpu().numpy()
+        transform = pose_to_transformation(pose, format="wxyz")
+        pts, _ = make_gripper_visualization(
+            rotation=transform[:3, :3],
+            translation=transform[:3, 3],
+            length=length,
+            density=50,
+            color=_POSE_COLORS[i % len(_POSE_COLORS)],
+        )
+        combined = np.vstack([combined, pts])
     plot_pcd(combined, base_frame=True)
 
 
@@ -143,7 +174,7 @@ def plan_and_execute_placement(
     """
     placement_pose = placement_pose.clone()
     placement_pose[2] = placement_pose[2] + Z_OFFSET
-    placement_pose[1] = placement_pose[1] - 0.2
+    placement_pose[1] = placement_pose[1] - 0.15
     inter_pose = placement_pose.clone()
     inter_pose[0] = placement_pose[0] + X_OFFSET
     inter_pose[1] = Y_OFFSET
@@ -243,32 +274,46 @@ def main():
     all_placements = np.asarray(place_data["placements"], dtype=np.float32)  # (M, 7)
     print(f"Loaded {len(all_placements)} placement poses from {place_path}")
 
-    # Pre-rank placements: top 20 by signed dot(gripper_z_axis, world_y),
-    # then sort that subset by descending y-coord (farthest y first).
-    # For wxyz quat, gripper z-axis = R[:, 2]; world-y component R[1, 2]
-    # = 2 * (qy*qz + qw*qx).
-    qw = all_placements[:, 3]
-    qx = all_placements[:, 4]
-    qy = all_placements[:, 5]
-    qz = all_placements[:, 6]
-    z_dot_y = 2.0 * (qy * qz + qw * qx)                                    # (M,)
-    TOP_K = 20
-    top_k = min(TOP_K, len(all_placements))
-    top_idx = np.argsort(-z_dot_y)[:top_k]                                 # largest dot first
-    # Reorder by descending y-coord (placement_pose[1]).
-    y_coords = all_placements[top_idx, 1]
-    ordered_within_top = top_idx[np.argsort(-y_coords)]
-    placement_queue = list(ordered_within_top.tolist())
-    print(f"Pre-ranked placements: top {top_k}/{len(all_placements)} by gripper-z . world_y, "
-          f"then sorted by descending y-coord. Queue: {placement_queue}")
-
-    # Random object order.
+    # Object order first; we sample N=len(object_order) placements next.
     object_order = list(OBJECT_IDS)
     if RANDOMIZE_OBJECT_ORDER:
         np.random.shuffle(object_order)
         print(f"\nObject execution order (randomized): {object_order}\n")
     else:
         print(f"\nObject execution order (as given): {object_order}\n")
+
+    # Override every placement quaternion with a fixed orientation:
+    #   gripper z-axis = world +y, gripper x-axis = world +z
+    # (so gripper y-axis = gripper_z x gripper_x = +y x +z = +x in world.)
+    # Resulting wxyz quat = (0.5, -0.5, -0.5, -0.5) (norm 1, verified by
+    # reconstruction). Position is taken from each saved placement.
+    FIXED_QUAT_WXYZ = np.array([0.70710677, -0.70710677, 0.0, 0.0], dtype=np.float32)
+    all_placements = all_placements.copy()
+    all_placements[:, 3:7] = FIXED_QUAT_WXYZ
+
+    # Stratified pick by descending y: sort all placements, split into n_obj
+    # buckets, pick one random per bucket. Execute bucket 0 (highest y) first.
+    n_pick = len(object_order)
+    if n_pick > len(all_placements):
+        raise RuntimeError(
+            f"Need {n_pick} placements but only {len(all_placements)} available."
+        )
+    y_sorted_idx = np.argsort(-all_placements[:, 1])                       # descending y
+    buckets = np.array_split(y_sorted_idx, n_pick)                         # n_pick chunks
+    placement_queue = [int(np.random.choice(b)) for b in buckets]
+    print(f"Sampled {n_pick} placements via y-stratified buckets "
+          f"(bucket sizes {[len(b) for b in buckets]}); "
+          f"queue {placement_queue} "
+          f"(y={all_placements[placement_queue, 1].round(3).tolist()})")
+
+    # Visualize placement_queue on saved pcd (color-coded in queue order).
+    # if "pcd" in place_data.files:
+    #     viz_pcd = np.asarray(place_data["pcd"], dtype=np.float32)
+    #     queued_poses = [all_placements[i] for i in placement_queue]
+    #     print("Visualizing placement_queue on saved pcd. Close window to continue.")
+    #     visualize_poses_on_pcd(viz_pcd, queued_poses)
+    # else:
+    #     print("No pcd in placement_poses.npz; skipping queue visualization.")
 
     # Robot + perception setup.
     print("Connecting to perception pipeline")
@@ -350,7 +395,7 @@ def main():
                 )
             seg = T // 3
             close_at = 2 * seg                                            # end of grasp segment
-            print(f"  replaying grasp trajectory T={T} (segments of {seg}), close at idx {close_at}")
+            print(f" grasp trajectory T={T} (segments of {seg}), close at idx {close_at}")
             controller.move_to_joints(controller.home_joints, controller.open_gripper_action)
             controller.move_along_trajectory(grasp_traj[:close_at], controller.open_gripper_action)
             controller.close_gripper()

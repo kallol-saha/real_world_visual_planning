@@ -51,18 +51,21 @@ class MotionPlanner:
 
     def __init__(
         self,
-        pointcloud: np.ndarray
+        pointcloud: np.ndarray = None
         ):
         """
-        Initialize the motion planner with point cloud collision checking.
+        Initialize the motion planner. Pointcloud is optional; if omitted, no
+        pointcloud-derived mesh is built (the static cuboid obstacles still
+        apply).
 
         Args:
             voxel_size: Size of each voxel in meters (default 0.02 = 2cm).
             voxel_dims: Dimensions of the voxel grid in meters [x, y, z]. Default is [2.0, 2.0, 2.0].
             voxel_pose: Pose of the voxel grid center [x, y, z, qw, qx, qy, qz]. Default is [0, 0, 0, 1, 0, 0, 0].
         """
-        
-        pointcloud = pointcloud[pointcloud[:, 1] >= 0]
+
+        if pointcloud is not None:
+            pointcloud = pointcloud[pointcloud[:, 1] >= 0]
         self.pointcloud = pointcloud
         self.reset_planner(pointcloud)
 
@@ -149,7 +152,7 @@ class MotionPlanner:
             "attached_object",
         ]
         
-    def reset_planner(self, pointcloud: np.ndarray):
+    def reset_planner(self, pointcloud: np.ndarray = None):
 
         print("Building CuRobo World")
         setup_curobo_logger("error")
@@ -184,13 +187,16 @@ class MotionPlanner:
             dims = [1., 0.2, 1.0]
         )
 
-        self.pointcloud_mesh = Mesh.from_pointcloud(
-            pointcloud,
-            pitch=0.02,
-            name="pointcloud_mesh",
-            pose=[0, 0, 0, 1, 0, 0, 0],
-            filter_close_points=0.3,
-        )
+        if pointcloud is not None:
+            self.pointcloud_mesh = Mesh.from_pointcloud(
+                pointcloud,
+                pitch=0.02,
+                name="pointcloud_mesh",
+                pose=[0, 0, 0, 1, 0, 0, 0],
+                filter_close_points=0.3,
+            )
+        else:
+            self.pointcloud_mesh = None
 
         self.shelf_top = Cuboid(
             name = "table",
@@ -218,7 +224,7 @@ class MotionPlanner:
         self.world_config.add_obstacle(self.front_wall)
         # self.world_config.add_obstacle(self.pointcloud_mesh)
         self.world_config.add_obstacle(self.right_wall)
-        self.world_config.add_obstacle(self.shelf_top)
+        # self.world_config.add_obstacle(self.shelf_top)
         # self.world_config.add_obstacle(self.shelf_side_blocker)
         # self.world_config.add_obstacle(self.object_area_blocker)
 

@@ -33,12 +33,19 @@ from frankapanda import FrankaPandaController
 #   force-replay a marked-failed grasp by listing it explicitly.              #
 # --------------------------------------------------------------------------- #
 ENV_ID = 0
+# GRASP_SELECTION = {
+#     0: [1], #[1, 2],     # blue and purple lego brick
+#     1: [0], #[0, 1],     # green lego brick
+#     2: [2], #[0, 2, 3],  # red and green lego
+#     # 3: [0, 3, 4],  # green and blue lego
+# }
 GRASP_SELECTION = {
-    0: [1], #[1, 2],     # blue and purple lego brick
-    1: [0], #[0, 1],     # green lego brick
-    2: [2], #[0, 2, 3],  # red and green lego
+    2: [2], #[1, 2],     # blue and purple lego brick
+    1: [1], #[0, 1],     # green lego brick
+    3: [4], #[0, 2, 3],  # red and green lego
     # 3: [0, 3, 4],  # green and blue lego
 }
+
 
 
 def _as_float_traj(t):
