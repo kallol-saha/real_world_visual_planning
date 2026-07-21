@@ -19,9 +19,11 @@ import numpy as np
 import open3d as o3d
 import zmq
 from robo_utils.conversion_utils import invert_transformation
+from robo_utils.visualization.plotting import plot_pcd
 
 
-def compute_icp_alignment(source_pcd, target_pcd, threshold=0.01, visualize=False):
+def compute_icp_alignment(source_pcd, target_pcd, threshold=0.01, visualize=False,
+                          point_to_plane=False):
     """
     Compute ICP alignment from source to target point cloud.
 
@@ -37,20 +39,27 @@ def compute_icp_alignment(source_pcd, target_pcd, threshold=0.01, visualize=Fals
     print(f"Source point cloud: {len(source_pcd.points)} points")
     print(f"Target point cloud: {len(target_pcd.points)} points")
 
-    print("Estimating normals...")
-    source_pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
-    )
-    target_pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
-    )
-
     trans_init = np.identity(4)
 
-    print(f"Running ICP with threshold={threshold}...")
+    if point_to_plane:
+        # Point-to-plane: needs normals; faster but unstable on flat/sparse
+        # scenes (ill-conditioned -> can diverge in one step).
+        print("Estimating normals...")
+        source_pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+        )
+        target_pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+        )
+        estimator = o3d.pipelines.registration.TransformationEstimationPointToPlane()
+        print(f"Running point-to-plane ICP with threshold={threshold}...")
+    else:
+        # Point-to-point: no normals, stable when clouds already overlap.
+        estimator = o3d.pipelines.registration.TransformationEstimationPointToPoint()
+        print(f"Running point-to-point ICP with threshold={threshold}...")
+
     reg_result = o3d.pipelines.registration.registration_icp(
-        source_pcd, target_pcd, threshold, trans_init,
-        o3d.pipelines.registration.TransformationEstimationPointToPlane()
+        source_pcd, target_pcd, threshold, trans_init, estimator
     )
 
     print("\nICP Registration Result:")
@@ -59,12 +68,20 @@ def compute_icp_alignment(source_pcd, target_pcd, threshold=0.01, visualize=Fals
     print(f"Inlier RMSE: {reg_result.inlier_rmse}")
 
     if visualize:
-        source_temp = source_pcd.copy()
-        target_temp = target_pcd.copy()
-        source_temp.paint_uniform_color([1, 0, 0])
-        target_temp.paint_uniform_color([0, 0, 1])
-        source_temp.transform(reg_result.transformation)
-        o3d.visualization.draw_geometries([source_temp, target_temp])
+        src = np.asarray(source_pcd.points)   # cam1 (source)
+        tgt = np.asarray(target_pcd.points)   # cam0 (target)
+        red = np.tile([1.0, 0.0, 0.0], (len(src), 1))    # cam1
+        blue = np.tile([0.0, 0.0, 1.0], (len(tgt), 1))   # cam0
+
+        # BEFORE alignment: raw source (red) vs target (blue).
+        print("Visualizing BEFORE alignment (red=cam1, blue=cam0). Close window to continue.")
+        plot_pcd(np.vstack([src, tgt]), np.vstack([red, blue]), base_frame=True)
+
+        # AFTER alignment: source transformed by the ICP result vs target.
+        T = reg_result.transformation
+        src_aligned = (np.hstack([src, np.ones((len(src), 1))]) @ T.T)[:, :3]
+        print("Visualizing AFTER alignment (red=cam1 transformed, blue=cam0). Close window to continue.")
+        plot_pcd(np.vstack([src_aligned, tgt]), np.vstack([red, blue]), base_frame=True)
 
     return reg_result.transformation
 
@@ -97,6 +114,9 @@ if __name__ == "__main__":
                         help='ICP correspondence distance threshold (meters)')
     parser.add_argument('--visualize', action='store_true',
                         help='Visualize ICP result with Open3D')
+    parser.add_argument('--point_to_plane', action='store_true',
+                        help='Use point-to-plane ICP (needs normals; unstable on flat/sparse '
+                             'scenes). Default: point-to-point (stable when clouds overlap).')
     args = parser.parse_args()
 
     data = receive_from_pipeline(args.subscribe_port, args.timeout_ms)
@@ -118,29 +138,25 @@ if __name__ == "__main__":
     cam1_pcd = o3d.geometry.PointCloud()
     cam1_pcd.points = o3d.utility.Vector3dVector(cam1_pcd_array)
 
-    # ICP: cam1 -> cam0. cam1 already had existing cam1_to_cam0 applied upstream
-    # (in capture_single_camera.py), so this yields a *residual* correction.
+    # ICP: cam1 -> cam0, from identity init. Run the pipeline with --no_align so
+    # cam1 is calibration-only; the ICP result is then the FULL cam1->cam0
+    # alignment and is saved directly (no composition). This matches
+    # align_multiple_cameras. Do NOT compose onto an existing file: under
+    # --no_align the existing transform was not applied upstream, so composing
+    # double-counts it and blows the result up.
     print("\n" + "="*60)
-    print("Computing residual alignment: Camera 1 -> Camera 0")
+    print("Computing alignment: Camera 1 -> Camera 0")
     print("="*60)
-    residual_cam1_to_cam0 = compute_icp_alignment(
-        cam1_pcd, cam0_pcd, threshold=args.threshold, visualize=args.visualize
+    cam1_to_cam0 = compute_icp_alignment(
+        cam1_pcd, cam0_pcd, threshold=args.threshold, visualize=args.visualize,
+        point_to_plane=args.point_to_plane,
     )
-    print(f"\nResidual transformation:\n{residual_cam1_to_cam0}")
+    print(f"\ncam1_to_cam0 transformation:\n{cam1_to_cam0}")
 
     alignment_dir = os.path.join("data", "camera_alignments")
     os.makedirs(alignment_dir, exist_ok=True)
     cam1_to_cam0_file = os.path.join(alignment_dir, "cam1_to_cam0.npy")
     cam0_to_cam1_file = os.path.join(alignment_dir, "cam0_to_cam1.npy")
-
-    # Compose residual with existing alignment (capture_single_camera applied it).
-    if os.path.exists(cam1_to_cam0_file):
-        existing = np.load(cam1_to_cam0_file)
-        cam1_to_cam0 = residual_cam1_to_cam0 @ existing
-        print(f"\nComposed residual with existing alignment from {cam1_to_cam0_file}")
-    else:
-        cam1_to_cam0 = residual_cam1_to_cam0
-        print(f"\nNo existing alignment at {cam1_to_cam0_file}; using residual as full alignment.")
 
     cam0_to_cam1 = invert_transformation(cam1_to_cam0)
 

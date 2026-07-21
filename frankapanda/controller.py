@@ -6,8 +6,9 @@ from deoxys.franka_interface import FrankaInterface
 from deoxys.utils import YamlConfig, transform_utils
 from deoxys.utils.log_utils import get_deoxys_example_logger
 
-# For controlling the Robotiq gripper:
-import pyrobotiqgripper as rq
+# Robotiq gripper (pyrobotiqgripper) is imported lazily inside __init__ only
+# when gripper_mode == "robotiq", so a Franka-only machine without the library
+# can still run in gripper_mode == "franka".
 
 from robo_utils.conversion_utils import transformation_to_pose
 
@@ -22,7 +23,11 @@ GRIPPER_NOOP = 0.0
 
 class FrankaPandaController:
 
-    def __init__(self):
+    def __init__(self, gripper_mode: str = "robotiq"):
+
+        assert gripper_mode in ("robotiq", "franka"), \
+            f"gripper_mode must be 'robotiq' or 'franka', got '{gripper_mode}'"
+        self.gripper_mode = gripper_mode
 
         self.robot_interface = FrankaInterface(
             "configs/charmander.yml",
@@ -50,18 +55,26 @@ class FrankaPandaController:
              0.7518,
         ])
 
-        # Robotiq gripper setup
-        self.gripper = rq.RobotiqGripper()
-        self.gripper.activate()
-        self.gripper.calibrate(closemm=0, openmm=40)
-        self.gripper.open()
+        # Franka gripper action bytes (deoxys action vector last element).
+        # Used to drive the Franka hand in gripper_mode == "franka"; inert in
+        # gripper_mode == "robotiq" (kept for caller API compatibility).
+        self.open_gripper_action = 1.0    # OPEN
+        self.close_gripper_action = 0.0   # CLOSED
 
-        # Threshold (mm) used to classify Robotiq state as OPEN vs CLOSED.
-        self._gripper_open_threshold_mm = 20.0
-
-        # Kept for backward compatibility; no longer drive the Franka gripper byte.
-        self.open_gripper_action = 1.0
-        self.close_gripper_action = 0.0
+        if self.gripper_mode == "robotiq":
+            # Robotiq gripper setup (separate USB/serial device).
+            import pyrobotiqgripper as rq  # lazy: only needed for robotiq mode
+            self.gripper = rq.RobotiqGripper()
+            self.gripper.activate()
+            self.gripper.calibrate(closemm=0, openmm=40)
+            self.gripper.open()
+            # Threshold (mm) used to classify Robotiq state as OPEN vs CLOSED.
+            self._gripper_open_threshold_mm = 20.0
+        else:
+            # Franka hand: no external device. Held byte streamed into every
+            # move action; updated only by open_gripper()/close_gripper().
+            self.gripper = None
+            self._gripper_byte = self.open_gripper_action  # start open
 
     def check_joint_position_violation(self):
 
@@ -80,7 +93,13 @@ class FrankaPandaController:
 
     def get_qpos(self) -> np.ndarray:
         while True:
-            if len(self.robot_interface._state_buffer) > 0:
+            # In franka mode get_gripper_state reads _gripper_state_buffer, so
+            # wait for it too. In robotiq mode gripper state is external.
+            gripper_ready = (
+                self.gripper_mode != "franka"
+                or len(self.robot_interface._gripper_state_buffer) > 0
+            )
+            if len(self.robot_interface._state_buffer) > 0 and gripper_ready:
                 joint_positions = self.robot_interface._state_buffer[-1].q
                 gripper_state = self.get_gripper_state()
                 qpos = np.concatenate([joint_positions, [gripper_state]])
@@ -102,18 +121,53 @@ class FrankaPandaController:
             print("Waiting for robot gripper pose...")
 
     def get_gripper_state(self) -> int:
-        position_mm = self.gripper.position_mm()
-        return OPEN if position_mm >= self._gripper_open_threshold_mm else CLOSED
+        if self.gripper_mode == "robotiq":
+            position_mm = self.gripper.position_mm()
+            return OPEN if position_mm >= self._gripper_open_threshold_mm else CLOSED
+        # franka: read Franka hand width from deoxys gripper state buffer.
+        while True:
+            if len(self.robot_interface._gripper_state_buffer) > 0:
+                gripper_width = self.robot_interface._gripper_state_buffer[-1].width
+                # 0. is open and 1. is closed for gripper width
+                return OPEN if np.abs(gripper_width) < 0.01 else CLOSED
+            print("Waiting for franka gripper state...")
 
     def open_gripper(self, num_steps: int = 10):
-        # num_steps kept for signature compatibility; Robotiq blocks until done.
-        del num_steps
-        self.gripper.open()
+        if self.gripper_mode == "robotiq":
+            # num_steps kept for signature compatibility; Robotiq blocks until done.
+            del num_steps
+            self.gripper.open()
+            return
+        # franka: hold open byte and stream it so the Franka hand actuates.
+        self._gripper_byte = self.open_gripper_action
+        self._stream_gripper_byte(num_steps)
 
     def close_gripper(self, num_steps: int = 10):
-        # num_steps kept for signature compatibility; Robotiq blocks until done.
-        del num_steps
-        self.gripper.close()
+        if self.gripper_mode == "robotiq":
+            # num_steps kept for signature compatibility; Robotiq blocks until done.
+            del num_steps
+            self.gripper.close()
+            return
+        # franka: hold close byte and stream it so the Franka hand actuates.
+        self._gripper_byte = self.close_gripper_action
+        self._stream_gripper_byte(num_steps)
+
+    def _stream_gripper_byte(self, num_steps: int):
+        """Franka-only: stream current joints + held gripper byte for num_steps
+        control ticks so the Franka hand actuates while the arm holds still."""
+        current_joints = self.get_robot_joints()
+        for _ in range(num_steps):
+            action = np.concatenate([current_joints, [self._gripper_byte]]).tolist()
+            self.robot_interface.control(
+                controller_type=self.joint_controller_type,
+                action=action,
+                controller_cfg=self.joint_controller_cfg,
+            )
+
+    def _move_byte(self) -> float:
+        """Gripper byte to fold into every move action: inert for robotiq,
+        the held open/close byte for franka."""
+        return GRIPPER_NOOP if self.gripper_mode == "robotiq" else self._gripper_byte
 
     def move_to_joints(
         self,
@@ -126,8 +180,10 @@ class FrankaPandaController:
         assert type(target_joints) == np.ndarray, "Target joints must be a numpy array"
         assert target_joints.shape == (7,), "Target joints must be a 7D array"
 
-        # gripper_state arg retained for API compatibility; Robotiq is driven via
-        # open_gripper/close_gripper. Franka's gripper byte is sent as a no-op.
+        # gripper_state arg ignored in both modes. Robotiq is driven via
+        # open_gripper/close_gripper (byte inert). Franka streams the held byte
+        # set by open_gripper/close_gripper. See design doc for the safety
+        # rationale (avoids dropping the object mid-motion).
         del gripper_state
 
         for _ in range(max_iterations):
@@ -138,7 +194,7 @@ class FrankaPandaController:
             if joint_error < joint_error_threshold:
                 break
 
-            action = np.concatenate([target_joints, [GRIPPER_NOOP]])
+            action = np.concatenate([target_joints, [self._move_byte()]])
             action = action.tolist()
 
             self.robot_interface.control(
@@ -182,7 +238,7 @@ class FrankaPandaController:
         assert trajectory.ndim == 2 and trajectory.shape[1] == 7, "Trajectory must be an (N, 7) array"
         assert downsample_factor >= 1, "downsample_factor must be >= 1"
 
-        del gripper_state  # Robotiq driven separately; Franka gripper byte unused.
+        del gripper_state  # ignored; gripper held via open_gripper/close_gripper.
 
         # Downsample, always keeping the final waypoint.
         if downsample_factor > 1 and len(trajectory) > 1:
@@ -195,7 +251,7 @@ class FrankaPandaController:
 
         last_idx = len(sparse) - 1
         for i, target_joints in enumerate(sparse):
-            action = np.concatenate([target_joints, [GRIPPER_NOOP]]).tolist()
+            action = np.concatenate([target_joints, [self._move_byte()]]).tolist()
 
             if i == last_idx:
                 # Settle to tight tolerance on final waypoint.
@@ -257,8 +313,8 @@ class FrankaPandaController:
             action_axis_angle = np.clip(action_axis_angle, -0.5, 0.5)
 
             # Combine actions: [pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, gripper]
-            # Gripper byte is a no-op; Robotiq is driven separately.
-            action = action_pos.tolist() + action_axis_angle.tolist() + [GRIPPER_NOOP]
+            # Gripper byte: inert for robotiq, held byte for franka.
+            action = action_pos.tolist() + action_axis_angle.tolist() + [self._move_byte()]
             logger.info(f"Axis angle action {action_axis_angle.tolist()}")
 
             self.robot_interface.control(

@@ -56,6 +56,8 @@ def main():
                         help='Camera ID (0 or 1)')
     parser.add_argument('--zmq_port', type=int, default=6555,
                         help='ZMQ port to send data to')
+    parser.add_argument('--no_align', action='store_true',
+                        help='Skip cam1->cam0 alignment (calibrated-only pcd).')
     args = parser.parse_args()
 
     print(f"[Camera {args.cam_id}] Initializing...")
@@ -101,6 +103,8 @@ def main():
         # Cam1 -> cam0 alignment.
         if args.cam_id == 0:
             print(f"[Camera {args.cam_id}] No alignment needed (reference frame)")
+        elif args.no_align:
+            print(f"[Camera {args.cam_id}] --no_align set: skipping cam1->cam0 alignment (calibrated-only)")
         else:
             alignment_path = project_root / "data" / "camera_alignments" / "cam1_to_cam0.npy"
             alignment_transform = np.load(alignment_path)

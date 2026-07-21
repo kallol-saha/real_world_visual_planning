@@ -171,13 +171,16 @@ def nn_carry_labels(pcd_source, labels_source, pcd_target):
 # Capture subprocess.
 # --------------------------------------------------------------------------- #
 
-def capture_camera(cam_id, zmq_port):
+def capture_camera(cam_id, zmq_port, no_align=False):
     print(f"\n{'='*60}")
     print(f"Starting capture for Camera {cam_id}")
     print(f"{'='*60}")
     script_path = Path(__file__).parent / "capture_single_camera.py"
+    cmd = ['python', str(script_path), '--cam_id', str(cam_id), '--zmq_port', str(zmq_port)]
+    if no_align:
+        cmd.append('--no_align')
     result = subprocess.run(
-        ['python', str(script_path), '--cam_id', str(cam_id), '--zmq_port', str(zmq_port)],
+        cmd,
         capture_output=True,
         text=True,
     )
@@ -201,6 +204,7 @@ def run_pipeline_iteration(
     no_downsample=False,
     cluster=False, dbscan_eps=0.02, dbscan_min_points=20,
     segmenter=None, seg_labels_str=None,
+    plot_cams=False, plot_crop=False, no_align=False,
 ):
     """One iteration of the perception pipeline. Returns success bool."""
     iter_prefix = f"[Iteration {iteration}] " if iteration is not None else ""
@@ -208,7 +212,7 @@ def run_pipeline_iteration(
     # 1. Capture + receive (H,W,3) data from both cameras sequentially.
     camera_data = {}
     for cam_id in [0, 1]:
-        if not capture_camera(cam_id, receive_port):
+        if not capture_camera(cam_id, receive_port, no_align=no_align):
             print(f"{iter_prefix}ERROR: Failed to capture from camera {cam_id}")
             return False
         print(f"\n{iter_prefix}Waiting to receive data from Camera {cam_id}...")
@@ -237,6 +241,24 @@ def run_pipeline_iteration(
         )
         per_cam_flat[cam_id] = dict(pcd=pcd_c, rgb=rgb_c, seg=seg_c)
         print(f"{iter_prefix}Camera {cam_id} valid pcd: {len(pcd_c)}")
+
+    # Per-camera inspection: plot each camera's pcd separately (cam0 first,
+    # then cam1). Blocks until window closed. Both in robot-base frame; with
+    # --no_align cam1 is calibration-only (no cam1->cam0 alignment). Cropping
+    # to workspace bounds is opt-in via plot_crop.
+    if plot_cams:
+        for cam_id in [0, 1]:
+            pcd_c = per_cam_flat[cam_id]['pcd']
+            rgb_c = per_cam_flat[cam_id]['rgb']
+            if plot_crop:
+                mask = compute_bounds_mask(pcd_c, bounds)
+                pcd_c, rgb_c = pcd_c[mask], rgb_c[mask]
+                crop_note = f" cropped to bounds ({len(pcd_c)}/{len(per_cam_flat[cam_id]['pcd'])} pts)"
+            else:
+                crop_note = f" ({len(pcd_c)} pts, uncropped)"
+            print(f"{iter_prefix}Plotting Camera {cam_id} pcd{crop_note}. "
+                  f"Close window to continue.")
+            plot_pcd(pcd_c, rgb_c, base_frame=True)
 
     # ---------- no-downsample branch (alignment use case) ---------- #
     if no_downsample:
@@ -399,6 +421,12 @@ def main():
                         help='DBSCAN neighborhood radius in meters')
     parser.add_argument('--dbscan_min_points', type=int, default=20,
                         help='DBSCAN minimum cluster size')
+    parser.add_argument('--plot_cams', action='store_true',
+                        help='Plot each camera pcd separately per iteration (blocks until closed).')
+    parser.add_argument('--plot_crop', action='store_true',
+                        help='With --plot_cams: crop each camera pcd to workspace bounds (default: uncropped).')
+    parser.add_argument('--no_align', action='store_true',
+                        help='Skip cam1->cam0 alignment; cameras are calibrated-only (before alignment).')
     parser.add_argument('--segment', action='store_true',
                         help='Run Grounded-SAM2 text-label segmentation on each camera RGB.')
     parser.add_argument('--seg_labels', type=str, default=DEFAULT_SEG_LABELS,
@@ -422,10 +450,13 @@ def main():
 
     # Spatial bounds: tight z = table -> roof so FPS keeps a clean 4096.
     bounds = {
-        'x': [0.3, 0.8],
-        'y': [-0.5, 0.35],
+        # 'x': [0.3, 0.8],
+        # 'y': [-0.5, 0.35],
+        # 'z': [-0.03, 0.2],
+        'x': [0.3, 0.6],
+        'y': [-0.35, 0.35],
         'z': [-0.03, 0.2],
-    }
+        }
 
     # ZMQ sockets.
     context = zmq.Context()
@@ -463,6 +494,9 @@ def main():
                     dbscan_min_points=args.dbscan_min_points,
                     segmenter=segmenter,
                     seg_labels_str=args.seg_labels,
+                    plot_cams=args.plot_cams,
+                    plot_crop=args.plot_crop,
+                    no_align=args.no_align,
                 )
                 if not success:
                     print(f"\nIteration {iteration} failed, stopping continuous mode")
@@ -489,6 +523,9 @@ def main():
                 dbscan_min_points=args.dbscan_min_points,
                 segmenter=segmenter,
                 seg_labels_str=args.seg_labels,
+                plot_cams=args.plot_cams,
+                plot_crop=args.plot_crop,
+                no_align=args.no_align,
             )
             if success:
                 print("\n" + "="*60)

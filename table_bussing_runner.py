@@ -59,10 +59,41 @@ from execute_table_bussing_plan import (
 SAVE_ROOT = Path("data/table_bussing")
 ENV_ID = 0
 
+# Hand-eye calibration offset (meters). Subtracted from x and y of every
+# predicted grasp + placement pose right after inference. z is untouched.
+CALIB_XY_OFFSET = (0.05, 0.05)
+
 
 # --------------------------------------------------------------------------- #
 # Per-iteration helpers (composed from execute_table_bussing_plan parts)
 # --------------------------------------------------------------------------- #
+
+
+def apply_calibration_offset(per_object, dx: float, dy: float):
+    """Subtract (dx, dy) from xy of every grasp and placement in-place."""
+    if dx == 0.0 and dy == 0.0:
+        return
+    print(f"\n>>> Applying calibration offset to predicted poses: "
+          f"x -= {dx:.4f}, y -= {dy:.4f}")
+    for obj in per_object:
+        for gi, g in enumerate(obj["grasps"]):
+            if isinstance(g, torch.Tensor):
+                g[0] = g[0] - dx
+                g[1] = g[1] - dy
+            else:
+                arr = np.asarray(g, dtype=np.float32).copy()
+                arr[0] -= dx
+                arr[1] -= dy
+                obj["grasps"][gi] = arr
+        for pi, p in enumerate(obj["placements"]):
+            if isinstance(p, torch.Tensor):
+                p[0] = p[0] - dx
+                p[1] = p[1] - dy
+            else:
+                arr = np.asarray(p, dtype=np.float32).copy()
+                arr[0] -= dx
+                arr[1] -= dy
+                obj["placements"][pi] = arr
 
 def capture_until_user_ok(perception: PerceptionPipeline):
     """Drain socket, recv, plot, prompt. Loop until user accepts."""
@@ -98,8 +129,10 @@ def capture_until_user_ok(perception: PerceptionPipeline):
 def partition_scene(pcd_np, rgb_np, seg_labels, seg_label_names):
     """
     Identify tray, merge in-tray objects into tray, list graspable objects.
-    Prompts user to confirm tray contents. Returns (object_specs, tray_pcd,
-    tray_rgb) or (None, None, None) if user aborts.
+    Prompts user to confirm tray contents. Returns
+    (object_specs, tray_pcd, tray_rgb, in_tray_objects) or
+    (None, None, None, None) if user aborts. `in_tray_objects` is a list of
+    dicts {name, centroid_xy} for every object segment merged into the tray.
     """
     if TRAY_LABEL not in seg_label_names:
         raise RuntimeError(f"TRAY_LABEL '{TRAY_LABEL}' not in {seg_label_names}.")
@@ -120,7 +153,7 @@ def partition_scene(pcd_np, rgb_np, seg_labels, seg_label_names):
         print(f"  object '{name}' idx={k} pts={n}")
     if not object_specs:
         print("  No non-tray object segments found.")
-        return None, None, None
+        return None, None, None, None
 
     tray_pcd = pcd_np[tray_mask]
     tray_rgb = rgb_np[tray_mask] if rgb_np is not None else None
@@ -136,6 +169,7 @@ def partition_scene(pcd_np, rgb_np, seg_labels, seg_label_names):
     merged_pcds = [tray_pcd]
     merged_rgbs = [tray_rgb] if tray_rgb is not None else None
     in_tray_names = []
+    in_tray_objects = []
     graspable_names = []
     for k, name, seg_pcd, seg_rgb in object_specs:
         cx = float(seg_pcd[:, 0].mean())
@@ -147,6 +181,10 @@ def partition_scene(pcd_np, rgb_np, seg_labels, seg_label_names):
             if merged_rgbs is not None and seg_rgb is not None:
                 merged_rgbs.append(seg_rgb)
             in_tray_names.append(name)
+            in_tray_objects.append({
+                "name": name,
+                "centroid_xy": np.array([cx, cy], dtype=np.float32),
+            })
         else:
             print(f"  KEEP graspable '{name}' centroid=({cx:.4f}, {cy:.4f}) ({len(seg_pcd)} pts).")
             kept.append((k, name, seg_pcd, seg_rgb))
@@ -157,7 +195,7 @@ def partition_scene(pcd_np, rgb_np, seg_labels, seg_label_names):
     print(f"  augmented tray pcd: {tray_pcd.shape}")
     if not kept:
         print("  All object segments are inside the tray. Nothing to bus.")
-        return None, None, None
+        return None, None, None, None
 
     print("\n##### Tray contents check #####")
     print(f"  Objects ALREADY IN TRAY (skipped): {in_tray_names if in_tray_names else '(none)'}")
@@ -165,10 +203,10 @@ def partition_scene(pcd_np, rgb_np, seg_labels, seg_label_names):
     while True:
         ans = input("  Continue with policy inference + execution? [y/N]: ").strip().lower()
         if ans in ("y", "yes"):
-            return kept, tray_pcd, tray_rgb
+            return kept, tray_pcd, tray_rgb, in_tray_objects
         if ans in ("", "n", "no"):
             print("  Aborted by user.")
-            return None, None, None
+            return None, None, None, None
         print("    Please answer y or n.")
 
 
@@ -298,7 +336,7 @@ def run_one_step(perception, controller, inference, device, step_i: int):
     save_step_pcd(pcd_np, rgb_np, seg_labels, seg_label_names, step_i)
 
     print("\n>>> Partitioning scene")
-    object_specs, tray_pcd, tray_rgb = partition_scene(
+    object_specs, tray_pcd, tray_rgb, in_tray_objects = partition_scene(
         pcd_np, rgb_np, seg_labels, seg_label_names,
     )
     if object_specs is None:
@@ -306,6 +344,7 @@ def run_one_step(perception, controller, inference, device, step_i: int):
 
     per_object = infer_per_object(inference, object_specs, tray_pcd)
     recenter_placements(per_object)
+    apply_calibration_offset(per_object, CALIB_XY_OFFSET[0], CALIB_XY_OFFSET[1])
 
     # Whole-scene FPS for value model.
     parts_for_value = [tray_pcd] + [s[2] for s in object_specs]

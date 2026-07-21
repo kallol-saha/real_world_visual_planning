@@ -135,7 +135,7 @@ if __name__ == "__main__":
     # cam_id = 2
     # data_dirname = os.path.join(dirpath, "data")
 
-    cam_id = 0
+    cam_id = 1
     data_dirname = "data"
     data_filepath = os.path.join(data_dirname, f"cam{cam_id}_data.pkl")
     with open(data_filepath, "rb") as f:
